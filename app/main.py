@@ -1,20 +1,29 @@
 
-import sys, os, io, json, logging, shutil, subprocess, platform, gc, time
+import sys, os, io, json, logging, shutil, subprocess, platform, gc, time, sqlite3, csv, re
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QPixmap, QImage, QIcon, QFont, QColor, QPainter, QLinearGradient, QPen, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QFileDialog, QListWidget, QSplashScreen,
     QListWidgetItem, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QSpinBox,
     QDoubleSpinBox, QComboBox, QCheckBox, QLineEdit, QMessageBox, QGroupBox,
-    QSplitter, QProgressBar, QPlainTextEdit, QFormLayout, QAbstractItemView, QSizePolicy
+    QSplitter, QProgressBar, QPlainTextEdit, QFormLayout, QAbstractItemView, QSizePolicy,
+    QTableWidget, QTableWidgetItem, QDialog, QDialogButtonBox, QDateEdit, QHeaderView
 )
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 
-APP_NAME = "PSразмер изображений PRO"
+APP_NAME = "PSразмер изображений PRO 2.3 — Внуково / Magicard"
+
+# Estimated portrait frame measured proportionally from the user's HUB screenshot.
+VNUKOVO_PHOTO_WIDTH_MM = 21.8
+VNUKOVO_PHOTO_HEIGHT_MM = 29.0
+VNUKOVO_PHOTO_WIDTH_CM = VNUKOVO_PHOTO_WIDTH_MM / 10
+VNUKOVO_PHOTO_HEIGHT_CM = VNUKOVO_PHOTO_HEIGHT_MM / 10
+VNUKOVO_PHOTO_SUFFIX = "21_8x29mm_300dpi"
 
 # Portable mode: all application-owned files stay beside the program.
 if getattr(sys, "frozen", False):
@@ -30,11 +39,13 @@ PRESETS_DIR = ROOT / "Presets"
 OUTPUT_DIR = ROOT / "Exports"
 TEMP_DIR = ROOT / "Temp"
 BACKUP_DIR = ROOT / "Backups"
+EMPLOYEE_DIR = ROOT / "Employees"
+DB_FILE = EMPLOYEE_DIR / "employees.sqlite3"
 RESOURCES_DIR = ROOT / "Resources"
 
 for folder in (
     CONFIG_DIR, LOG_DIR, CACHE_DIR, HISTORY_DIR, PRESETS_DIR,
-    OUTPUT_DIR, TEMP_DIR, BACKUP_DIR, RESOURCES_DIR
+    OUTPUT_DIR, TEMP_DIR, BACKUP_DIR, EMPLOYEE_DIR, RESOURCES_DIR
 ):
     folder.mkdir(parents=True, exist_ok=True)
 
@@ -65,6 +76,30 @@ if not PRESETS_FILE.exists():
         "Квадрат": [4.0, 4.0],
         "Виза США": [5.1, 5.1]
     }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+# Локальная база сотрудников. Фотографии и персональные данные остаются на этом ПК.
+@contextmanager
+def db_connect():
+    con = sqlite3.connect(DB_FILE)
+    con.row_factory = sqlite3.Row
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+def init_employee_db():
+    with db_connect() as con:
+        con.execute("""CREATE TABLE IF NOT EXISTS employees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL, organization TEXT DEFAULT '', department TEXT DEFAULT '',
+            position TEXT DEFAULT '', badge_number TEXT DEFAULT '', valid_until TEXT DEFAULT '',
+            photo_path TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+
+init_employee_db()
 
 FORMATS = ["JPG", "PNG", "WEBP", "TIFF", "BMP", "GIF"]
 SUPPORTED = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif"}
@@ -113,6 +148,35 @@ def make_photo(source, width_cm=3.0, height_cm=4.0, dpi=300, mode="Заполн�
             canvas.paste(im, ((w-im.width)//2, (h-im.height)//2))
             im = canvas
         return im, w, h
+
+def detect_face_focus(source):
+    """Return normalized crop focus around the largest detected face.
+
+    OpenCV is optional. When unavailable or no face is detected, return None
+    so the normal centered/manual crop remains available.
+    """
+    try:
+        import cv2
+        import numpy as np
+        with Image.open(source) as raw:
+            rgb = np.array(ImageOps.exif_transpose(raw).convert("RGB"))
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        cascade_path = str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
+        cascade = cv2.CascadeClassifier(cascade_path)
+        faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(36, 36))
+        if len(faces) == 0:
+            return None
+        x, y, w, h = max(faces, key=lambda r: int(r[2]) * int(r[3]))
+        # Place crop center slightly below face center to retain head and shoulders.
+        cx = (x + w / 2) / rgb.shape[1]
+        cy = min(0.92, (y + h * 1.10) / rgb.shape[0])
+        return (float(cx), float(cy), (int(x), int(y), int(w), int(h)))
+    except ImportError:
+        return None
+    except Exception:
+        logging.exception("Face detection failed: %s", source)
+        return None
+
 
 class DropList(QListWidget):
     def __init__(self, parent=None):
@@ -187,6 +251,46 @@ class CropPreview(QLabel):
         self.zoom = 1.0
         if self.on_change:
             self.on_change()
+
+class EmployeeDialog(QDialog):
+    def __init__(self, parent=None, record=None):
+        super().__init__(parent)
+        self.setWindowTitle("Карточка сотрудника")
+        self.setMinimumWidth(460)
+        form = QFormLayout(self)
+        record = dict(record) if record else {}
+        self.full_name = QLineEdit(record.get("full_name", ""))
+        self.organization = QLineEdit(record.get("organization", "ООО \"Пирог Улыбка\""))
+        self.department = QLineEdit(record.get("department", ""))
+        self.position = QLineEdit(record.get("position", ""))
+        self.badge_number = QLineEdit(record.get("badge_number", ""))
+        self.valid_until = QLineEdit(record.get("valid_until", ""))
+        self.photo_path = QLineEdit(record.get("photo_path", ""))
+        photo_row = QHBoxLayout(); photo_row.addWidget(self.photo_path)
+        browse = QPushButton("Выбрать…")
+        browse.clicked.connect(self.pick_photo)
+        photo_row.addWidget(browse)
+        photo_wrap = QWidget(); photo_wrap.setLayout(photo_row)
+        form.addRow("ФИО *", self.full_name)
+        form.addRow("Организация", self.organization)
+        form.addRow("Подразделение", self.department)
+        form.addRow("Должность", self.position)
+        form.addRow("Номер пропуска", self.badge_number)
+        form.addRow("Действует до (ДД.ММ.ГГГГ)", self.valid_until)
+        form.addRow("Исходная фотография", photo_wrap)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def pick_photo(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Фотография сотрудника", "", "Изображения (*.jpg *.jpeg *.png *.bmp *.webp *.tif)")
+        if path: self.photo_path.setText(path)
+
+    def values(self):
+        return {"full_name": self.full_name.text().strip(), "organization": self.organization.text().strip(),
+                "department": self.department.text().strip(), "position": self.position.text().strip(),
+                "badge_number": self.badge_number.text().strip(), "valid_until": self.valid_until.text().strip(),
+                "photo_path": self.photo_path.text().strip()}
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -297,9 +401,14 @@ class MainWindow(QMainWindow):
         self.info = QLabel("Выберите фото. Перетаскивайте его мышью для кадрирования; колёсико — масштаб.")
         self.info.setObjectName("muted")
         rl.addWidget(self.info)
+        crop_actions = QHBoxLayout()
         reset_crop_btn = QPushButton("Сбросить кадрирование")
         reset_crop_btn.clicked.connect(self.preview.reset_crop)
-        rl.addWidget(reset_crop_btn)
+        self.face_btn = QPushButton("Найти лицо")
+        self.face_btn.setToolTip("Определить положение лица на выбранной фотографии")
+        self.face_btn.clicked.connect(self.detect_selected_face)
+        crop_actions.addWidget(reset_crop_btn); crop_actions.addWidget(self.face_btn)
+        rl.addLayout(crop_actions)
         splitter.addWidget(left); splitter.addWidget(right); splitter.setSizes([420, 650])
         root.addWidget(splitter, 1)
         settings_box = QGroupBox("Параметры подготовки")
@@ -313,7 +422,8 @@ class MainWindow(QMainWindow):
             "Фото 9 × 13 см",
             "Фото 10 × 15 см",
             "Квадрат (1:1)",
-            "Визовый формат США (51 × 51 мм)"
+            "Визовый формат США (51 × 51 мм)",
+            "Пропуск Внуково (окно фото ≈ 21,8 × 29 мм)"
         ])
         self.preset.currentIndexChanged.connect(self.apply_preset)
         self.width_cm = QDoubleSpinBox(); self.width_cm.setRange(0.5, 30); self.width_cm.setDecimals(2); self.width_cm.setSingleStep(0.1); self.width_cm.setValue(3); self.width_cm.setSuffix(" см")
@@ -323,6 +433,9 @@ class MainWindow(QMainWindow):
         self.format = QComboBox(); self.format.addItems(FORMATS)
         self.quality = QSpinBox(); self.quality.setRange(50, 100); self.quality.setValue(95)
         self.name_prefix = QLineEdit("Фото")
+        self.auto_face = QCheckBox("Автоподгон лица при пакетной обработке")
+        self.auto_face.setChecked(True)
+        self.auto_face.setToolTip("Для каждого фото пакетно определять лицо, если установлен OpenCV")
         form.addWidget(QLabel("Быстрый шаблон"),0,0); form.addWidget(self.preset,0,1,1,3)
         form.addWidget(QLabel("Ширина"),0,4); form.addWidget(self.width_cm,0,5)
         form.addWidget(QLabel("Высота"),0,6); form.addWidget(self.height_cm,0,7)
@@ -331,6 +444,7 @@ class MainWindow(QMainWindow):
         form.addWidget(QLabel("Формат сохранения"),1,5); form.addWidget(self.format,1,6)
         form.addWidget(QLabel("Качество JPG/WEBP"),1,7); form.addWidget(self.quality,1,8)
         form.addWidget(QLabel("Префикс имени"),2,0); form.addWidget(self.name_prefix,2,1)
+        form.addWidget(self.auto_face,2,2,1,4)
         root.addWidget(settings_box)
         actions = QHBoxLayout()
         self.prepare_btn = QPushButton("Подготовить фото")
@@ -351,7 +465,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(prep, "Подготовка фото")
 
         magic = QWidget(); ml = QVBoxLayout(magic)
-        intro = QLabel("Передача фотографий в Magicard HUB. Фото подготавливается в точном размере 3 × 4 см при 300 DPI (настройки можно изменить на первой вкладке).")
+        intro = QLabel("Профиль оборудования: Magicard 300 + Magicard HUB 2.0.6. В редакторе выбран CR80 (85,60 × 53,98 мм). По присланному скриншоту рамка портрета оценена примерно в 21,8 × 29,0 мм (ширина × высота), JPG, 300 DPI. Это оценка по экранному изображению; перед серийной печатью проверьте Width/Height/Position объекта Image в HUB.")
         intro.setWordWrap(True); ml.addWidget(intro)
         mbox = QGroupBox("Быстрый перенос")
         mf = QFormLayout(mbox)
@@ -371,11 +485,29 @@ class MainWindow(QMainWindow):
         mf.addRow(row); ml.addWidget(mbox)
         auto = QGroupBox("Пошаговая вставка в карточку человека")
         al = QVBoxLayout(auto)
-        al.addWidget(QLabel("Без доступа к окну HUB нельзя безопасно определить поле фотографии и нажимать элементы интерфейса автоматически. Поэтому режим не имитирует успешную вставку: он копирует фото, открывает HUB и даёт понятные шаги. После этого в HUB выберите поле фотографии и нажмите Ctrl+V."))
+        al.addWidget(QLabel("Magicard HUB поддерживает импорт данных CSV/Excel. Кнопка «CSV для HUB + фото» готовит таблицу сотрудников и локальные JPG. В мастере импорта HUB сопоставьте поля; возможность связать столбец PhotoFile с полем изображения нужно проверить на установленной версии. Для одиночной записи используйте выделенный JPG и штатную команду выбора фотографии."))
         auto_btn = QPushButton("Подготовить фото и открыть HUB"); auto_btn.clicked.connect(self.guided_insert)
         al.addWidget(auto_btn)
         ml.addWidget(auto); ml.addStretch()
         tabs.addTab(magic, "Magicard HUB")
+
+        emp = QWidget(); el = QVBoxLayout(emp)
+        intro_emp = QLabel("Локальный реестр сотрудников Внуково. Данные хранятся в SQLite на этом компьютере; портреты готовятся примерно 21,8 × 29,0 мм / 300 DPI по присланному скриншоту CR80. Перед тиражом сверьте точный размер Image в свойствах элемента HUB.")
+        intro_emp.setWordWrap(True); el.addWidget(intro_emp)
+        self.employee_table = QTableWidget(0, 6)
+        self.employee_table.setHorizontalHeaderLabels(["ID", "ФИО", "Организация", "Должность", "№ пропуска", "Действует до"])
+        self.employee_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.employee_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.employee_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.employee_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.employee_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        el.addWidget(self.employee_table, 1)
+        erow = QHBoxLayout()
+        for label, slot in [("＋ Добавить", self.add_employee), ("Изменить", self.edit_employee), ("Удалить", self.delete_employee), ("Подготовить фото", self.prepare_employee_photo), ("Открыть HUB с фото", self.send_employee_to_hub), ("Экспорт карточки PNG", self.export_employee_card), ("Импорт CSV", self.import_employees_csv), ("Экспорт CSV", self.export_employees_csv), ("CSV для HUB + фото", self.export_hub_bundle_csv)]:
+            b = QPushButton(label); b.clicked.connect(slot); erow.addWidget(b)
+        el.addLayout(erow)
+        tabs.addTab(emp, "Сотрудники Внуково")
+        self.refresh_employees()
 
         hist = QWidget(); hl = QVBoxLayout(hist)
         hl.addWidget(QLabel("История подготовленных файлов"))
@@ -403,6 +535,9 @@ class MainWindow(QMainWindow):
 
     def apply_settings(self):
         self.hub_path.setText(self.settings.get("hub_path",""))
+        self.settings.setdefault("printer_model", "Magicard 300")
+        self.settings.setdefault("hub_version", "2.0.6")
+        self.settings.setdefault("photo_profile", "Vnukovo portrait approx. 21.8x29.0mm 300dpi (estimated from HUB screenshot)")
 
     def apply_preset(self, index):
         presets_cm = {
@@ -413,11 +548,17 @@ class MainWindow(QMainWindow):
             5: (10.0, 15.0),
             6: (4.0, 4.0),
             7: (5.1, 5.1),       # US-style square photo
+            8: (VNUKOVO_PHOTO_WIDTH_CM, VNUKOVO_PHOTO_HEIGHT_CM),  # estimated from supplied HUB screenshot
         }
         if index in presets_cm:
             w, h = presets_cm[index]
             self.width_cm.setValue(w)
             self.height_cm.setValue(h)
+            if index == 8:
+                self.name_prefix.setText("Vnukovo")
+                self.dpi.setValue(300)
+                self.format.setCurrentText("JPG")
+                self.mode.setCurrentText("Заполнить (обрезать)")
             self.preview_selected()
 
     def save_one_as(self):
@@ -526,6 +667,22 @@ class MainWindow(QMainWindow):
             self.preview.setText("Не удалось открыть изображение")
             self.info.setText(str(e)); logging.exception("Preview error: %s", path)
 
+    def detect_selected_face(self):
+        row = self.file_list.currentRow()
+        if row < 0 or row >= len(self.files):
+            QMessageBox.information(self, APP_NAME, "Сначала выберите фотографию.")
+            return
+        result = detect_face_focus(self.files[row])
+        if result is None:
+            QMessageBox.information(self, APP_NAME,
+                "Лицо не найдено или модуль распознавания не установлен.\n"
+                "Можно установить OpenCV командой: pip install opencv-python-headless\n"
+                "Либо выполнить кадрирование вручную мышью.")
+            return
+        self.preview.focus_x, self.preview.focus_y, _ = result
+        self.preview_selected()
+        self.statusBar().showMessage("Лицо найдено — кадрирование обновлено", 5000)
+
     def prepare_all(self):
         if not self.files:
             QMessageBox.information(self, APP_NAME, "Сначала добавьте фотографии."); return
@@ -536,7 +693,14 @@ class MainWindow(QMainWindow):
         for n, idx in enumerate(indexes, 1):
             source = self.files[idx]
             try:
-                im, w, h = make_photo(source, self.width_cm.value(), self.height_cm.value(), self.dpi.value(), self.mode.currentText(), self.preview.focus_x, self.preview.focus_y, self.preview.zoom)
+                fx, fy = self.preview.focus_x, self.preview.focus_y
+                zoom = self.preview.zoom
+                if self.auto_face.isChecked():
+                    face = detect_face_focus(source)
+                    if face is not None:
+                        fx, fy, _ = face
+                        zoom = max(zoom, 1.08)
+                im, w, h = make_photo(source, self.width_cm.value(), self.height_cm.value(), self.dpi.value(), self.mode.currentText(), fx, fy, zoom)
                 self.prepared[source] = (im.copy(), w, h)
                 success += 1
             except Exception:
@@ -626,7 +790,7 @@ class MainWindow(QMainWindow):
         if row >= 0 and row < len(self.files):
             src = self.files[row]
             if src in self.prepared:
-                target = OUTPUT_DIR / f"{Path(src).stem}_3x4.jpg"
+                target = OUTPUT_DIR / f"{Path(src).stem}_prepared.jpg"
                 self.prepared[src][0].save(target, "JPEG", quality=95, dpi=(self.dpi.value(), self.dpi.value()))
                 self.add_history(str(target), self.prepared[src][1], self.prepared[src][2], "JPG")
                 self.refresh_history()
@@ -634,7 +798,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "Сначала нажмите «Подготовить выбранные / все».")
         elif self.prepared:
             src, (im,w,h) = next(iter(self.prepared.items()))
-            target = OUTPUT_DIR / f"{Path(src).stem}_3x4.jpg"
+            target = OUTPUT_DIR / f"{Path(src).stem}_prepared.jpg"
             im.save(target, "JPEG", quality=95, dpi=(self.dpi.value(), self.dpi.value()))
             return str(target)
         return None
@@ -683,16 +847,239 @@ class MainWindow(QMainWindow):
                 os.startfile(hub) if os.name == "nt" else subprocess.Popen([hub])
             except Exception as e:
                 QMessageBox.warning(self, APP_NAME, f"Не удалось открыть HUB:\n{e}")
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["explorer", "/select,", str(Path(path).resolve())])
+            else:
+                self.open_output()
+        except Exception:
+            logging.exception("Could not reveal prepared photo")
         QMessageBox.information(
-            self, "Подготовка для Magicard HUB",
-            "Фото сохранено локально:\n" + path +
-            "\n\nВ Magicard HUB откройте нужную карточку и выберите файл через поле фотографии. "
-            "Передача через буфер обмена отключена."
+            self, "Фото подготовлено для Magicard HUB",
+            "Готовый JPG сохранён:\n" + path +
+            "\n\nПапка с файлом открыта. В HUB откройте карточку сотрудника и импортируйте выделенный JPG штатной командой. "
+            "Прямое заполнение карточки пока не заявляется: оно зависит от версии HUB и доступных способов интеграции."
         )
+
+    def refresh_employees(self):
+        if not hasattr(self, "employee_table"): return
+        with db_connect() as con:
+            rows = con.execute("SELECT * FROM employees ORDER BY full_name COLLATE NOCASE").fetchall()
+        self.employee_table.setRowCount(len(rows))
+        for r, rec in enumerate(rows):
+            values = [rec["id"], rec["full_name"], rec["organization"], rec["position"], rec["badge_number"], rec["valid_until"]]
+            for c, value in enumerate(values):
+                self.employee_table.setItem(r, c, QTableWidgetItem(str(value or "")))
+        self.employee_table.resizeRowsToContents()
+
+    def selected_employee_id(self):
+        row = self.employee_table.currentRow() if hasattr(self, "employee_table") else -1
+        if row < 0: return None
+        item = self.employee_table.item(row, 0)
+        return int(item.text()) if item else None
+
+    def get_employee(self):
+        emp_id = self.selected_employee_id()
+        if emp_id is None:
+            QMessageBox.information(self, APP_NAME, "Сначала выберите сотрудника."); return None
+        with db_connect() as con:
+            rec = con.execute("SELECT * FROM employees WHERE id=?", (emp_id,)).fetchone()
+        return dict(rec) if rec else None
+
+    def add_employee(self):
+        dlg = EmployeeDialog(self)
+        if dlg.exec() != QDialog.Accepted: return
+        data = dlg.values()
+        if not data["full_name"]:
+            QMessageBox.warning(self, APP_NAME, "Заполните ФИО сотрудника."); return
+        now = datetime.now().isoformat(timespec="seconds")
+        with db_connect() as con:
+            con.execute("INSERT INTO employees(full_name,organization,department,position,badge_number,valid_until,photo_path,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (*[data[k] for k in ("full_name","organization","department","position","badge_number","valid_until","photo_path")], now, now))
+        self.refresh_employees()
+
+    def edit_employee(self):
+        rec = self.get_employee()
+        if not rec: return
+        dlg = EmployeeDialog(self, rec)
+        if dlg.exec() != QDialog.Accepted: return
+        data = dlg.values()
+        if not data["full_name"]: QMessageBox.warning(self, APP_NAME, "Заполните ФИО."); return
+        now = datetime.now().isoformat(timespec="seconds")
+        with db_connect() as con:
+            con.execute("UPDATE employees SET full_name=?,organization=?,department=?,position=?,badge_number=?,valid_until=?,photo_path=?,updated_at=? WHERE id=?",
+                (*[data[k] for k in ("full_name","organization","department","position","badge_number","valid_until","photo_path")], now, rec["id"]))
+        self.refresh_employees()
+
+    def delete_employee(self):
+        rec = self.get_employee()
+        if not rec: return
+        if QMessageBox.question(self, APP_NAME, f"Удалить запись сотрудника «{rec['full_name']}»? Фото на диске останется.") != QMessageBox.Yes: return
+        with db_connect() as con: con.execute("DELETE FROM employees WHERE id=?", (rec["id"],))
+        self.refresh_employees()
+
+    def prepare_employee_photo(self):
+        rec = self.get_employee()
+        if not rec: return None
+        src = Path(rec.get("photo_path", ""))
+        if not src.is_file():
+            QMessageBox.warning(self, APP_NAME, "У выбранного сотрудника не задана доступная фотография. Откройте «Изменить» и выберите файл."); return None
+        try:
+            focus = detect_face_focus(str(src))
+            fx, fy = (focus[0], focus[1]) if focus else (0.5, 0.5)
+            im, w, h = make_photo(str(src), VNUKOVO_PHOTO_WIDTH_CM, VNUKOVO_PHOTO_HEIGHT_CM, 300, "Заполнить (обрезать)", fx, fy, 1.08 if focus else 1.0)
+            safe = re.sub(r"[^A-Za-zА-Яа-яЁё0-9_-]+", "_", rec.get("badge_number") or str(rec["id"])).strip("_") or str(rec["id"])
+            target = OUTPUT_DIR / f"Vnukovo_{safe}_21_8x29mm_300dpi.jpg"
+            im.save(target, "JPEG", quality=96, dpi=(300,300), optimize=True)
+            im.close()
+            with db_connect() as con: con.execute("UPDATE employees SET updated_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), rec["id"]))
+            self.magicard_file.setText(str(target))
+            self.statusBar().showMessage(f"Фото подготовлено: {target}", 7000)
+            return target
+        except Exception as e:
+            logging.exception("Employee photo prepare failed")
+            QMessageBox.critical(self, APP_NAME, f"Не удалось подготовить фотографию:\n{e}"); return None
+
+    def send_employee_to_hub(self):
+        target = self.prepare_employee_photo()
+        if not target: return
+        hub = self.hub_path.text().strip()
+        try:
+            if hub and Path(hub).is_file():
+                if os.name == "nt": os.startfile(hub)
+                else: subprocess.Popen([hub])
+            if os.name == "nt": subprocess.Popen(["explorer", "/select,", str(target.resolve())])
+            else: self.open_output()
+            QMessageBox.information(self, APP_NAME, "Фото подготовлено и выделено в Проводнике. В Magicard HUB откройте запись сотрудника и импортируйте этот JPG штатной командой. Прямое заполнение карточки зависит от версии HUB и пока не имитируется.")
+        except Exception as e: QMessageBox.warning(self, APP_NAME, f"Не удалось открыть HUB или Проводник:\n{e}")
+
+    def export_employee_card(self):
+        rec = self.get_employee()
+        if not rec: return
+        # Превью формата ID-1 (CR80), не является готовым макетом для печати без калибровки HUB.
+        W, H = 1016, 638
+        card = Image.new("RGB", (W,H), "white"); d = ImageDraw.Draw(card)
+        d.rounded_rectangle((8,8,W-8,H-8), radius=26, outline="#2879ad", width=8)
+        def font(sz, bold=False):
+            candidates = ["C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+            for f in candidates:
+                try: return ImageFont.truetype(f, sz)
+                except Exception: pass
+            return ImageFont.load_default()
+        d.text((420,28), f"№ {rec.get('badge_number') or '—'}", fill="#111111", font=font(34,True))
+        d.text((45,80), "ВНУКОВО", fill="#202a35", font=font(56,True))
+        d.text((48,143), "Международный аэропорт", fill="#394553", font=font(24))
+        d.text((55,235), rec.get("organization") or "Организация", fill="#111111", font=font(34,True))
+        name = rec.get("full_name") or "ФИО сотрудника"
+        d.text((55,320), name[:32], fill="#111111", font=font(34,True))
+        d.text((55,382), (rec.get("department") or "")[:36], fill="#111111", font=font(30,True))
+        d.text((55,438), (rec.get("position") or "Должность")[:36], fill="#222222", font=font(28))
+        d.text((270,560), f"действует до {rec.get('valid_until') or '—'}", fill="#111111", font=font(26,True))
+        photo_path = Path(rec.get("photo_path") or "")
+        prepared = OUTPUT_DIR / f"Vnukovo_{re.sub(r'[^A-Za-zА-Яа-яЁё0-9_-]+','_', rec.get('badge_number') or str(rec['id']))}.jpg"
+        if prepared.is_file(): photo_path = prepared
+        if photo_path.is_file():
+            try:
+                with Image.open(photo_path) as ph:
+                    ph = ImageOps.fit(ph.convert("RGB"), (240,300))
+                    card.paste(ph, (710,45))
+            except Exception: pass
+        else:
+            d.rectangle((710,45,950,345), outline="#8796a5", width=3)
+            d.text((755,180), "ФОТО", fill="#8796a5", font=font(28,True))
+        d.text((730,380), "CATERING", fill="#3d579f", font=font(34,True))
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить предварительный макет карты", str(OUTPUT_DIR / "card_preview.png"), "PNG (*.png)")
+        if path:
+            card.save(path, "PNG", dpi=(300,300))
+            QMessageBox.information(self, APP_NAME, "Предварительный макет сохранён. Перед печатью нужно сверить поля, логотипы и физический размер с шаблоном Magicard HUB.")
+
+    def import_employees_csv(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Импорт сотрудников CSV", "", "CSV (*.csv)")
+        if not path: return
+        count = 0
+        try:
+            with open(path, "r", encoding="utf-8-sig", newline="") as f:
+                sample = f.read(2048); f.seek(0)
+                dialect = csv.Sniffer().sniff(sample, delimiters=";,\t")
+                reader = csv.DictReader(f, dialect=dialect)
+                aliases = {"ФИО":"full_name", "Организация":"organization", "Подразделение":"department", "Должность":"position", "Номер пропуска":"badge_number", "Действует до":"valid_until", "Фото":"photo_path"}
+                with db_connect() as con:
+                    for row in reader:
+                        data = {aliases.get(k, k): (v or "").strip() for k,v in row.items() if k}
+                        if not data.get("full_name"): continue
+                        now = datetime.now().isoformat(timespec="seconds")
+                        con.execute("INSERT INTO employees(full_name,organization,department,position,badge_number,valid_until,photo_path,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                            (data.get("full_name"),data.get("organization",""),data.get("department",""),data.get("position",""),data.get("badge_number",""),data.get("valid_until",""),data.get("photo_path",""),now,now)); count += 1
+            self.refresh_employees(); QMessageBox.information(self, APP_NAME, f"Импортировано записей: {count}")
+        except Exception as e: QMessageBox.critical(self, APP_NAME, f"Ошибка импорта CSV:\n{e}")
+
+    def export_hub_bundle_csv(self):
+        """Create a neutral CSV bridge plus locally prepared portrait files.
+        HUB field mapping is completed by the operator during its supported import wizard.
+        """
+        with db_connect() as con:
+            rows = [dict(r) for r in con.execute("SELECT * FROM employees ORDER BY full_name COLLATE NOCASE").fetchall()]
+        if not rows:
+            QMessageBox.information(self, APP_NAME, "Реестр сотрудников пуст."); return
+        path, _ = QFileDialog.getSaveFileName(self, "Пакет CSV для Magicard HUB", str(OUTPUT_DIR / "Magicard_HUB_import.csv"), "CSV (*.csv)")
+        if not path: return
+        count, no_photo = 0, 0
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f, delimiter=";")
+                writer.writerow(["FullName", "Organization", "Department", "Position", "BadgeNumber", "ValidUntil", "PhotoFile"])
+                for rec in rows:
+                    photo_out = ""
+                    source = Path(rec.get("photo_path") or "")
+                    if source.is_file():
+                        face = detect_face_focus(str(source))
+                        fx, fy = (face[0], face[1]) if face else (0.5, 0.5)
+                        im, w, h = make_photo(str(source), VNUKOVO_PHOTO_WIDTH_CM, VNUKOVO_PHOTO_HEIGHT_CM, 300, "Заполнить (обрезать)", fx, fy, 1.08 if face else 1.0)
+                        safe = re.sub(r"[^A-Za-zА-Яа-яЁё0-9_-]+", "_", rec.get("badge_number") or str(rec["id"])).strip("_") or str(rec["id"])
+                        photo_target = OUTPUT_DIR / f"Vnukovo_{safe}_21_8x29mm_300dpi.jpg"
+                        im.save(photo_target, "JPEG", quality=96, dpi=(300,300), optimize=True); im.close()
+                        photo_out = str(photo_target.resolve())
+                    else:
+                        no_photo += 1
+                    writer.writerow([rec.get("full_name", ""), rec.get("organization", ""), rec.get("department", ""),
+                                     rec.get("position", ""), rec.get("badge_number", ""), rec.get("valid_until", ""), photo_out])
+                    count += 1
+            QMessageBox.information(self, APP_NAME,
+                f"Подготовлен CSV-пакет: {count} записей\nБез исходного фото: {no_photo}\nCSV: {path}\n\nВ Magicard HUB используйте штатный импорт CSV/Excel и сопоставьте текстовые поля. Поле PhotoFile содержит путь к локальному JPG; возможность автоматического связывания этого столбца с image-полем зависит от конкретного мастера импорта HUB и должна быть проверена.")
+        except Exception as e:
+            logging.exception("Magicard HUB CSV export failed")
+            QMessageBox.critical(self, APP_NAME, f"Ошибка создания пакета для HUB:\n{e}")
+
+    def export_employees_csv(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Экспорт сотрудников CSV", str(OUTPUT_DIR / "employees.csv"), "CSV (*.csv)")
+        if not path: return
+        with db_connect() as con: rows = con.execute("SELECT full_name,organization,department,position,badge_number,valid_until,photo_path FROM employees ORDER BY full_name").fetchall()
+        headers = ["ФИО","Организация","Подразделение","Должность","Номер пропуска","Действует до","Фото"]
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f, delimiter=";"); writer.writerow(headers)
+                for r in rows: writer.writerow(list(r))
+            QMessageBox.information(self, APP_NAME, f"Экспортировано записей: {len(rows)}\n{path}")
+        except Exception as e: QMessageBox.critical(self, APP_NAME, f"Ошибка экспорта:\n{e}")
 
     def closeEvent(self, event):
         self.settings["hub_path"] = self.hub_path.text().strip()
+        self.settings["printer_model"] = "Magicard 300"
+        self.settings["hub_version"] = "2.0.6"
+        self.settings["photo_profile"] = "Vnukovo portrait approx. 21.8x29.0mm 300dpi (estimated from HUB screenshot)"
         save_json(SETTINGS_FILE, self.settings)
+        try:
+            db_backup = BACKUP_DIR / f"employees_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sqlite3"
+            shutil.copy2(DB_FILE, db_backup)
+            db_backups = sorted(BACKUP_DIR.glob("employees_*.sqlite3"), key=lambda x: x.stat().st_mtime, reverse=True)
+            for old_db in db_backups[10:]: old_db.unlink(missing_ok=True)
+            backup_name = BACKUP_DIR / f"settings_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            shutil.copy2(SETTINGS_FILE, backup_name)
+            backups = sorted(BACKUP_DIR.glob("settings_*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
+            for old_backup in backups[20:]:
+                old_backup.unlink(missing_ok=True)
+        except Exception:
+            logging.exception("Settings backup failed")
         for im, _, _ in self.prepared.values():
             try: im.close()
             except Exception: pass
@@ -707,7 +1094,7 @@ def create_splash_pixmap():
     painter.setRenderHint(QPainter.Antialiasing)
 
     gradient = QLinearGradient(0, 0, 560, 300)
-    gradient.setColorAt(0.0, QColor("#263b4b"))
+    gradient.setColorAt(0.0, QColor("#263442"))
     gradient.setColorAt(1.0, QColor("#111b24"))
     painter.fillRect(pixmap.rect(), gradient)
 
@@ -717,7 +1104,8 @@ def create_splash_pixmap():
     painter.drawEllipse(390, -115, 310, 310)
     painter.setBrush(QColor(50, 160, 190, 20))
     painter.drawEllipse(425, -80, 240, 240)
-    painter.fillRect(0, 0, 7, 300, QColor("#31a6bd"))
+    painter.fillRect(0, 0, 6, 300, QColor("#31a6bd"))
+    painter.fillRect(6, 0, 2, 300, QColor("#d5b45b"))
 
     icon_path = RESOURCES_DIR / "PSrazmer.png"
     if not icon_path.exists():

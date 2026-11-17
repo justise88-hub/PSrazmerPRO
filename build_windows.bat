@@ -8,7 +8,7 @@ if not exist ".venv\Scripts\python.exe" (
 ) else (
   call .venv\Scripts\activate
 )
-pyinstaller --noconfirm --clean --windowed --name "PSrazmer_PRO" --icon "Resources\PSrazmer.ico" --add-data "Resources;Resources" --collect-all PySide6 app\main.py
+pyinstaller --noconfirm --clean --windowed --name "PSrazmer_PRO" --icon "Resources\PSrazmer.ico" --add-data "Resources;Resources" --collect-all PySide6 --collect-all cv2 app\main.py
 if errorlevel 1 (
   echo Ошибка сборки. Проверьте сообщения выше.
   pause
