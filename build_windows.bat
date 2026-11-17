@@ -1,29 +1,25 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
+if errorlevel 1 goto :failed
 
 echo ================================================
-echo   PSразмер PRO 2.8.2 - сборка Windows-программы
+echo   PSrazmer PRO 2.8.2 - сборка Windows-программы
 echo ================================================
 
-where py >nul 2>nul
-if errorlevel 1 (
-  echo Не найден Python Launcher (py). Установите Python 3.11/3.12 x64 с python.org.
-  pause
-  exit /b 1
-)
+where python >nul 2>nul
+if errorlevel 1 goto :python_missing
 
-if not exist ".venv\Scripts\python.exe" (
-  py -3 -m venv .venv
-  if errorlevel 1 goto :error
-)
-call ".venv\Scripts\activate.bat"
-python -m pip install --upgrade pip
-if errorlevel 1 goto :error
-python -m pip install -r requirements.txt
-if errorlevel 1 goto :error
+if not exist ".venv\Scripts\python.exe" python -m venv ".venv"
+if errorlevel 1 goto :failed
 
-python -m PyInstaller --noconfirm --clean --windowed --onedir ^
+set "PYTHON_EXE=%CD%\.venv\Scripts\python.exe"
+"%PYTHON_EXE%" -m pip install --upgrade pip
+if errorlevel 1 goto :failed
+"%PYTHON_EXE%" -m pip install -r requirements.txt
+if errorlevel 1 goto :failed
+
+"%PYTHON_EXE%" -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --name "PSrazmer_PRO" ^
   --contents-directory "." ^
   --icon "Resources\PSrazmer.ico" ^
@@ -32,11 +28,11 @@ python -m PyInstaller --noconfirm --clean --windowed --onedir ^
   --collect-all PySide6 ^
   --collect-all cv2 ^
   app\main.py
-if errorlevel 1 goto :error
+if errorlevel 1 goto :failed
 
 if not exist "dist\PSrazmer_PRO\Resources" mkdir "dist\PSrazmer_PRO\Resources"
 copy /Y "create_shortcuts.ps1" "dist\PSrazmer_PRO\create_shortcuts.ps1" >nul
-if errorlevel 1 goto :error
+if errorlevel 1 goto :failed
 
 echo.
 echo Сборка завершена: dist\PSrazmer_PRO\PSrazmer_PRO.exe
@@ -45,8 +41,13 @@ echo.
 pause
 exit /b 0
 
-:error
+:python_missing
+echo Не найден Python. Установите Python 3.11 или 3.12 x64 и включите Add Python to PATH.
+pause
+exit /b 1
+
+:failed
 echo.
-echo ОШИБКА сборки. Смотрите сообщения выше.
+echo ОШИБКА сборки. Проверьте сообщения выше.
 pause
 exit /b 1
