@@ -1,0 +1,348 @@
+--- 2.5.1/app/main.py
++++ 2.6/app/main.py
+@@ -16,7 +16,7 @@
+ from openpyxl import Workbook
+ from openpyxl.drawing.image import Image as XLImage
+ 
+-APP_NAME = "PSразмер PRO 2.5.1 — Внуково / Magicard HUB"
++APP_NAME = "PSразмер PRO 2.6 — Внуково / Magicard HUB"
+ DEVELOPER_NAME = "P.Sveshnikov"
+ 
+ # Estimated portrait frame measured proportionally from the user's HUB screenshot.
+@@ -92,6 +92,30 @@
+     finally:
+         con.close()
+ 
++def create_database_backup(reason="manual"):
++    """Create a consistent timestamped SQLite backup before data-changing operations."""
++    if not DB_FILE.exists():
++        return None
++    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
++    safe_reason = re.sub(r"[^A-Za-z0-9_-]+", "_", str(reason))[:32]
++    target = BACKUP_DIR / f"employees_{stamp}_{safe_reason}.sqlite3"
++    source_con = sqlite3.connect(DB_FILE)
++    target_con = sqlite3.connect(target)
++    try:
++        source_con.backup(target_con)
++    finally:
++        target_con.close()
++        source_con.close()
++    # Keep the latest 30 automatic backups to avoid unbounded disk usage.
++    backups = sorted(BACKUP_DIR.glob("employees_*.sqlite3"), key=lambda p: p.stat().st_mtime, reverse=True)
++    for old in backups[30:]:
++        try:
++            old.unlink()
++        except OSError:
++            logging.warning("Could not remove old backup %s", old)
++    return target
++
++
+ def init_employee_db():
+     with db_connect() as con:
+         con.execute("""CREATE TABLE IF NOT EXISTS employees (
+@@ -102,6 +126,15 @@
+         columns = {row[1] for row in con.execute("PRAGMA table_info(employees)").fetchall()}
+         if "issue_date" not in columns:
+             con.execute("ALTER TABLE employees ADD COLUMN issue_date TEXT DEFAULT ''")
++        con.execute("""CREATE TABLE IF NOT EXISTS issuance_history (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            employee_id INTEGER,
++            full_name TEXT NOT NULL,
++            badge_number TEXT DEFAULT '',
++            issue_date TEXT DEFAULT '',
++            card_file TEXT DEFAULT '',
++            created_at TEXT NOT NULL
++        )""")
+ 
+ init_employee_db()
+ 
+@@ -567,26 +600,33 @@
+         self.employee_table = QTableWidget(0, 7)
+         self.employee_table.setHorizontalHeaderLabels(["ID", "ФИО", "Организация", "Должность", "№ пропуска", "Дата выдачи", "Действует до"])
+         self.employee_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+-        self.employee_table.setSelectionMode(QAbstractItemView.SingleSelection)
++        self.employee_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+         self.employee_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+         self.employee_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+         self.employee_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+         el.addWidget(self.employee_table, 1)
+         erow = QHBoxLayout()
+-        for label, slot in [("＋ Добавить", self.add_employee), ("Изменить", self.edit_employee), ("Удалить", self.delete_employee), ("Подготовить фото", self.prepare_employee_photo), ("Фото в шаблон HUB .card", self.export_employee_to_hub_template), ("Открыть HUB с фото", self.send_employee_to_hub), ("Экспорт карточки PNG", self.export_employee_card), ("Импорт CSV", self.import_employees_csv), ("Экспорт CSV", self.export_employees_csv), ("CSV для HUB + фото", self.export_hub_bundle_csv)]:
++        for label, slot in [("＋ Добавить", self.add_employee), ("Изменить", self.edit_employee), ("Удалить", self.delete_employee), ("Подготовить фото", self.prepare_employee_photo), ("Создать пропуск (.card)", self.export_employee_to_hub_template), ("Пакет .card", self.export_selected_employees_to_hub), ("Открыть HUB с фото", self.send_employee_to_hub), ("Экспорт карточки PNG", self.export_employee_card), ("Импорт CSV", self.import_employees_csv), ("Экспорт CSV", self.export_employees_csv), ("CSV для HUB + фото", self.export_hub_bundle_csv)]:
+             b = QPushButton(label); b.clicked.connect(slot); erow.addWidget(b)
+         el.addLayout(erow)
+         tabs.addTab(emp, "Сотрудники Внуково")
+         self.refresh_employees()
+ 
+         hist = QWidget(); hl = QVBoxLayout(hist)
+-        hl.addWidget(QLabel("История подготовленных файлов"))
++        hl.addWidget(QLabel("История подготовленных файлов и выдачи пропусков"))
+         self.history_list = QListWidget(); hl.addWidget(self.history_list)
++        self.issuance_list = QListWidget()
++        self.issuance_list.setMaximumHeight(150)
++        hl.addWidget(QLabel("Последние созданные карточки HUB"))
++        hl.addWidget(self.issuance_list)
+         hrow = QHBoxLayout()
+         refresh = QPushButton("Обновить"); refresh.clicked.connect(self.refresh_history)
+         open_hist = QPushButton("Открыть папку"); open_hist.clicked.connect(self.open_output)
+-        clear_hist = QPushButton("Очистить историю"); clear_hist.clicked.connect(self.clear_history)
+-        hrow.addWidget(refresh); hrow.addWidget(open_hist); hrow.addWidget(clear_hist); hl.addLayout(hrow)
++        clear_hist = QPushButton("Очистить историю файлов"); clear_hist.clicked.connect(self.clear_history)
++        backup_btn = QPushButton("Создать резервную копию базы"); backup_btn.clicked.connect(self.manual_backup)
++        hrow.addWidget(refresh); hrow.addWidget(open_hist); hrow.addWidget(clear_hist); hrow.addWidget(backup_btn); hl.addLayout(hrow)
++        tabs.addTab(hist, "История и резервные копии")
++        tabs.setCurrentWidget(emp)
+ 
+         about = QWidget(); abl = QVBoxLayout(about)
+         abl.addWidget(QLabel("<h2>PSразмер изображений PRO</h2><p>Универсальный редактор размера изображений и фотографий: для паспорта, ID-карты, визы, пропуска, печати и публикации в интернете.</p><p>Быстрые шаблоны размеров, точные сантиметры и DPI, сохранение одного фото через «Сохранить как…» или пакетный экспорт.</p><p>Логи: logs/psrazmer.log<br>Настройки и история: data/</p><p>Пароли и данные Magicard HUB программа не запрашивает и не хранит.</p><p><b>Разработчик:</b> P.Sveshnikov</p>"))
+@@ -848,6 +888,23 @@
+         self.history_list.clear()
+         for item in self.history:
+             self.history_list.addItem(f"{item.get('date','')} | {Path(item.get('path','')).name} | {item.get('pixels','')} | {item.get('format','')}")
++        if hasattr(self, "issuance_list"):
++            self.issuance_list.clear()
++            with db_connect() as con:
++                issued = con.execute("SELECT created_at,full_name,badge_number,card_file FROM issuance_history ORDER BY id DESC LIMIT 100").fetchall()
++            for item in issued:
++                self.issuance_list.addItem(f"{item['created_at']} | {item['full_name']} | № {item['badge_number']} | {Path(item['card_file']).name}")
++
++    def manual_backup(self):
++        try:
++            target = create_database_backup("manual")
++            if target:
++                QMessageBox.information(self, APP_NAME, f"Резервная копия базы создана:\\n{target}")
++            else:
++                QMessageBox.information(self, APP_NAME, "База сотрудников пока не создана.")
++        except Exception as e:
++            logging.exception("Manual backup failed")
++            QMessageBox.critical(self, APP_NAME, f"Не удалось создать резервную копию:\\n{e}")
+ 
+     def clear_history(self):
+         if QMessageBox.question(self, APP_NAME, "Очистить историю?") == QMessageBox.Yes:
+@@ -1008,6 +1065,7 @@
+         if duplicate:
+             QMessageBox.warning(self, APP_NAME, f"Номер пропуска {data['badge_number']} уже используется.")
+             return
++        create_database_backup("before_add")
+         now = datetime.now().isoformat(timespec="seconds")
+         with db_connect() as con:
+             con.execute("INSERT INTO employees(full_name,organization,department,position,badge_number,valid_until,photo_path,issue_date,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+@@ -1029,6 +1087,7 @@
+         if duplicate:
+             QMessageBox.warning(self, APP_NAME, f"Номер пропуска {data['badge_number']} уже используется.")
+             return
++        create_database_backup("before_edit")
+         now = datetime.now().isoformat(timespec="seconds")
+         with db_connect() as con:
+             con.execute("UPDATE employees SET full_name=?,organization=?,department=?,position=?,badge_number=?,valid_until=?,photo_path=?,issue_date=?,updated_at=? WHERE id=?",
+@@ -1039,6 +1098,7 @@
+         rec = self.get_employee()
+         if not rec: return
+         if QMessageBox.question(self, APP_NAME, f"Удалить запись сотрудника «{rec['full_name']}»? Фото на диске останется.") != QMessageBox.Yes: return
++        create_database_backup("before_delete")
+         with db_connect() as con: con.execute("DELETE FROM employees WHERE id=?", (rec["id"],))
+         self.refresh_employees()
+ 
+@@ -1056,6 +1116,26 @@
+                 return None
+             fx, fy, zoom = crop_dlg.values()
+             im, w, h = make_photo(str(src), VNUKOVO_PHOTO_WIDTH_CM, VNUKOVO_PHOTO_HEIGHT_CM, 300, "Заполнить (обрезать)", fx, fy, zoom)
++            # Show the full card preview before saving the personalized HUB file.
++            preview_data = design.get("about", {}).get("preview", "")
++            if preview_data.startswith("data:image/"):
++                preview_bytes = base64.b64decode(preview_data.split(",", 1)[1])
++                preview_dialog = QDialog(self)
++                preview_dialog.setWindowTitle("Предпросмотр пропуска — проверьте фото")
++                preview_dialog.resize(820, 560)
++                preview_layout = QVBoxLayout(preview_dialog)
++                preview_label = QLabel()
++                preview_label.setAlignment(Qt.AlignCenter)
++                preview_pixmap = QPixmap.fromImage(QImage.fromData(preview_bytes))
++                preview_label.setPixmap(preview_pixmap.scaled(780, 470, Qt.KeepAspectRatio, Qt.SmoothTransformation))
++                preview_layout.addWidget(preview_label, 1)
++                preview_layout.addWidget(QLabel("Проверьте положение фотографии. Остальные элементы исходного макета сохранены."))
++                preview_buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
++                preview_buttons.accepted.connect(preview_dialog.accept)
++                preview_buttons.rejected.connect(preview_dialog.reject)
++                preview_layout.addWidget(preview_buttons)
++                if preview_dialog.exec() != QDialog.Accepted:
++                    return
+             safe = re.sub(r"[^A-Za-zА-Яа-яЁё0-9_-]+", "_", rec.get("badge_number") or str(rec["id"])).strip("_") or str(rec["id"])
+             target = OUTPUT_DIR / f"Vnukovo_{safe}_21_8x29mm_300dpi.jpg"
+             im.save(target, "JPEG", quality=96, dpi=(300,300), optimize=True)
+@@ -1163,6 +1243,15 @@
+             if not out_path.lower().endswith(".card"):
+                 out_path += ".card"
+             Path(out_path).write_text(json.dumps(design, ensure_ascii=False, indent=2), encoding="utf-8")
++            # Keep a local issuance/export audit trail and a pre-change DB snapshot.
++            create_database_backup("before_issue_log")
++            with db_connect() as con:
++                con.execute(
++                    "INSERT INTO issuance_history(employee_id,full_name,badge_number,issue_date,card_file,created_at) VALUES(?,?,?,?,?,?)",
++                    (rec["id"], rec.get("full_name",""), rec.get("badge_number",""),
++                     rec.get("issue_date",""), str(Path(out_path).resolve()),
++                     datetime.now().isoformat(timespec="seconds"))
++                )
+             # Verify the saved file is valid JSON and the image payload is readable.
+             check = json.loads(Path(out_path).read_text(encoding="utf-8"))
+             check_element = next(e for e in check["front"]["elements"] if e.get("fileName", "").lower() == "images.jpg")
+@@ -1170,16 +1259,116 @@
+             with Image.open(io.BytesIO(raw)) as verify_image:
+                 verify_image.verify()
+             self.statusBar().showMessage(f"Шаблон с новой фотографией сохранён: {out_path}", 10000)
++            self.refresh_history()
+             QMessageBox.information(
+                 self, "Шаблон Magicard HUB готов",
+                 "Новая фотография подставлена на место старой. Остальные элементы шаблона не изменялись.\n\n"
+                 f"Файл: {out_path}\n\nОткройте этот .card в Magicard HUB. Исходный шаблон сохранён без изменений."
+             )
+             if os.name == "nt":
+-                subprocess.Popen(["explorer", "/select,", str(Path(out_path).resolve())])
++                try:
++                    os.startfile(str(Path(out_path).resolve()))
++                except Exception:
++                    subprocess.Popen(["explorer", "/select,", str(Path(out_path).resolve())])
+         except Exception as e:
+             logging.exception("HUB card template photo replacement failed")
+             QMessageBox.critical(self, APP_NAME, f"Не удалось заменить фотографию в шаблоне:\n{e}")
++
++    def export_selected_employees_to_hub(self):
++        """Batch-create per-employee .card copies; the original template is never modified."""
++        rows = sorted({idx.row() for idx in self.employee_table.selectionModel().selectedRows()})
++        if not rows:
++            QMessageBox.information(self, APP_NAME, "Выберите одного или нескольких сотрудников в таблице.")
++            return
++        template = self.settings.get("hub_card_template", str(ROOT / "Templates" / "New Card Design.card"))
++        if not Path(template).is_file():
++            template = self.choose_hub_card_template()
++        if not template:
++            return
++        out_dir = QFileDialog.getExistingDirectory(self, "Папка для пакетных .card", str(OUTPUT_DIR))
++        if not out_dir:
++            return
++        import base64
++        try:
++            with open(template, "r", encoding="utf-8-sig") as f:
++                base_design = json.load(f)
++            base_elements = base_design.get("front", {}).get("elements", [])
++            matching = [e for e in base_elements if e.get("name") == "Image" and e.get("fileName", "").lower() == "images.jpg"]
++            if len(matching) != 1:
++                raise ValueError("В шаблоне не найден единственный объект images.jpg.")
++            create_database_backup("before_batch_issue_log")
++            created, skipped = [], []
++            for row in rows:
++                item = self.employee_table.item(row, 0)
++                rec_id = int(item.text()) if item else None
++                with db_connect() as con:
++                    record = con.execute("SELECT * FROM employees WHERE id=?", (rec_id,)).fetchone()
++                if not record:
++                    skipped.append(f"ID {rec_id}: запись не найдена"); continue
++                rec = dict(record)
++                source_path = Path(rec.get("photo_path") or "")
++                if not source_path.is_file():
++                    skipped.append(f"{rec.get('full_name')}: нет фотографии"); continue
++                face = detect_face_focus(str(source_path))
++                fx, fy = (face[0], face[1]) if face else (0.5, 0.5)
++                im, _, _ = make_photo(str(source_path), VNUKOVO_PHOTO_WIDTH_CM, VNUKOVO_PHOTO_HEIGHT_CM,
++                                      300, "Заполнить (обрезать)", fx, fy, 1.08 if face else 1.0)
++                safe = re.sub(r"[^A-Za-zА-Яа-яЁё0-9_-]+", "_", rec.get("badge_number") or str(rec_id)).strip("_") or str(rec_id)
++                jpg_path = Path(out_dir) / f"Vnukovo_{safe}_21_8x29mm_300dpi.jpg"
++                im.save(jpg_path, "JPEG", quality=96, dpi=(300,300), optimize=True)
++                im.close()
++                design = json.loads(json.dumps(base_design))
++                element = next(e for e in design["front"]["elements"]
++                               if e.get("name") == "Image" and e.get("fileName", "").lower() == "images.jpg")
++                def encoded_image(size, fmt):
++                    with Image.open(jpg_path) as img:
++                        fitted = ImageOps.fit(img.convert("RGB"), size, method=Image.Resampling.LANCZOS)
++                        buf = io.BytesIO()
++                        if fmt == "JPEG":
++                            fitted.save(buf, "JPEG", quality=96, optimize=True); mime = "image/jpeg"
++                        else:
++                            fitted.save(buf, "PNG", optimize=True); mime = "image/png"
++                        fitted.close()
++                    return f"data:{mime};base64," + base64.b64encode(buf.getvalue()).decode("ascii")
++                def old_size(field, fallback):
++                    try:
++                        raw = element[field].split(",",1)[1]
++                        with Image.open(io.BytesIO(base64.b64decode(raw))) as old_img: return old_img.size
++                    except Exception: return fallback
++                element["base64image"] = encoded_image(old_size("base64image",(109,145)), "JPEG")
++                element["originalBase64Image"] = encoded_image(old_size("originalBase64Image",(122,162)), "PNG")
++                preview_raw = design.get("about",{}).get("preview","")
++                if preview_raw.startswith("data:image/"):
++                    preview = Image.open(io.BytesIO(base64.b64decode(preview_raw.split(",",1)[1]))).convert("RGBA")
++                    bg = design.get("front",{}).get("background",{})
++                    sx = preview.width / float(bg.get("width",1013)); sy = preview.height / float(bg.get("height",642))
++                    px, py = round(float(element.get("x",0))*sx), round(float(element.get("y",0))*sy)
++                    pw, ph = max(1,round(float(element.get("width",0))*sx)), max(1,round(float(element.get("height",0))*sy))
++                    with Image.open(jpg_path) as photo:
++                        thumb = ImageOps.fit(photo.convert("RGB"),(pw,ph),method=Image.Resampling.LANCZOS)
++                    preview.paste(thumb,(px,py)); pb=io.BytesIO(); preview.save(pb,"PNG",optimize=True)
++                    design["about"]["preview"]="data:image/png;base64,"+base64.b64encode(pb.getvalue()).decode("ascii")
++                    preview.close(); thumb.close()
++                card_path = Path(out_dir) / f"Magicard_{safe}.card"
++                card_path.write_text(json.dumps(design,ensure_ascii=False,indent=2),encoding="utf-8")
++                # Validate generated card JSON and embedded image bytes before reporting success.
++                check=json.loads(card_path.read_text(encoding="utf-8"))
++                payload=base64.b64decode(next(e for e in check["front"]["elements"] if e.get("fileName","").lower()=="images.jpg")["base64image"].split(",",1)[1])
++                with Image.open(io.BytesIO(payload)) as test_image: test_image.verify()
++                with db_connect() as con:
++                    con.execute("INSERT INTO issuance_history(employee_id,full_name,badge_number,issue_date,card_file,created_at) VALUES(?,?,?,?,?,?)",
++                        (rec_id,rec.get("full_name",""),rec.get("badge_number",""),rec.get("issue_date",""),str(card_path.resolve()),datetime.now().isoformat(timespec="seconds")))
++                created.append(card_path.name)
++            self.statusBar().showMessage(f"Пакет HUB: создано {len(created)}, пропущено {len(skipped)}",10000)
++            summary = f"Создано файлов .card: {len(created)}"
++            if skipped: summary += "\\n\\nПропущено:\\n" + "\\n".join(skipped[:20])
++            summary += "\\n\\nИсходный шаблон не изменён. Проверьте каждый файл в Magicard HUB перед печатью."
++            self.refresh_history()
++            QMessageBox.information(self,"Пакетная подготовка HUB",summary)
++            if os.name == "nt": subprocess.Popen(["explorer",str(Path(out_dir).resolve())])
++        except Exception as e:
++            logging.exception("Batch HUB card export failed")
++            QMessageBox.critical(self,APP_NAME,f"Ошибка пакетной подготовки .card:\\n{e}")
+ 
+     def send_employee_to_hub(self):
+         target = self.prepare_employee_photo()
+@@ -1238,7 +1427,9 @@
+         path, _ = QFileDialog.getOpenFileName(self, "Импорт сотрудников CSV", "", "CSV (*.csv)")
+         if not path: return
+         count = 0
++        duplicates = 0
+         try:
++            create_database_backup("before_csv_import")
+             with open(path, "r", encoding="utf-8-sig", newline="") as f:
+                 sample = f.read(2048); f.seek(0)
+                 dialect = csv.Sniffer().sniff(sample, delimiters=";,\t")
+@@ -1257,18 +1448,26 @@
+                 next_auto_number = int(next_auto_text)
+                 auto_width = len(next_auto_text)
+                 with db_connect() as con:
++                    used_numbers = {str(r[0]).strip() for r in con.execute("SELECT badge_number FROM employees WHERE badge_number<>''").fetchall()}
+                     for row in reader:
+                         data = {aliases.get(k, k): (v or "").strip() for k,v in row.items() if k}
+                         if not data.get("full_name"): continue
++                        badge = data.get("badge_number", "")
++                        if not badge:
++                            while str(next_auto_number).zfill(auto_width) in used_numbers:
++                                next_auto_number += 1
++                            badge = str(next_auto_number).zfill(auto_width)
++                            next_auto_number += 1
++                        if badge in used_numbers:
++                            duplicates += 1
++                            continue
+                         now = datetime.now().isoformat(timespec="seconds")
+                         con.execute("INSERT INTO employees(full_name,organization,department,position,badge_number,valid_until,photo_path,issue_date,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                             (data.get("full_name"),data.get("organization",""),data.get("department",""),data.get("position",""),
+-                             data.get("badge_number","") or str(next_auto_number).zfill(auto_width),data.get("valid_until",""),
+-                             data.get("photo_path",""),data.get("issue_date") or datetime.now().strftime("%d.%m.%Y"),now,now))
+-                        if not data.get("badge_number"):
+-                            next_auto_number += 1
++                             badge,data.get("valid_until",""),data.get("photo_path",""),data.get("issue_date") or datetime.now().strftime("%d.%m.%Y"),now,now))
++                        used_numbers.add(badge)
+                         count += 1
+-            self.refresh_employees(); QMessageBox.information(self, APP_NAME, f"Импортировано записей: {count}")
++            self.refresh_employees(); QMessageBox.information(self, APP_NAME, f"Импортировано записей: {count}\nПропущено дубликатов номеров: {duplicates}")
+         except Exception as e: QMessageBox.critical(self, APP_NAME, f"Ошибка импорта CSV:\n{e}")
+ 
+     def export_hub_bundle_csv(self):

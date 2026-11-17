@@ -1,0 +1,355 @@
+--- a/app/main.py
++++ b/app/main.py
+@@ -4,7 +4,7 @@
+ from pathlib import Path
+ from datetime import datetime
+ from PIL import Image, ImageOps, ImageDraw, ImageFont
+-from PySide6.QtCore import Qt, QSize, QTimer
++from PySide6.QtCore import Qt, QSize, QTimer, QDate
+ from PySide6.QtGui import QPixmap, QImage, QIcon, QFont, QColor, QPainter, QLinearGradient, QPen, QDragEnterEvent, QDropEvent
+ from PySide6.QtWidgets import (
+     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QFileDialog, QListWidget, QSplashScreen,
+@@ -16,7 +16,7 @@
+ from openpyxl import Workbook
+ from openpyxl.drawing.image import Image as XLImage
+ 
+-APP_NAME = "PSразмер изображений PRO 2.3 — Внуково / Magicard"
++APP_NAME = "PSразмер PRO 2.4 — Внуково / Magicard HUB"
+ 
+ # Estimated portrait frame measured proportionally from the user's HUB screenshot.
+ VNUKOVO_PHOTO_WIDTH_MM = 21.8
+@@ -97,7 +97,10 @@
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             full_name TEXT NOT NULL, organization TEXT DEFAULT '', department TEXT DEFAULT '',
+             position TEXT DEFAULT '', badge_number TEXT DEFAULT '', valid_until TEXT DEFAULT '',
+-            photo_path TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
++            photo_path TEXT DEFAULT '', issue_date TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
++        columns = {row[1] for row in con.execute("PRAGMA table_info(employees)").fetchall()}
++        if "issue_date" not in columns:
++            con.execute("ALTER TABLE employees ADD COLUMN issue_date TEXT DEFAULT ''")
+ 
+ init_employee_db()
+ 
+@@ -252,6 +255,58 @@
+         if self.on_change:
+             self.on_change()
+ 
++
++
++class EmployeeCropDialog(QDialog):
++    def __init__(self, source, parent=None, focus_x=0.5, focus_y=0.5, zoom=1.0):
++        super().__init__(parent)
++        self.setWindowTitle("Кадрирование фотографии для Magicard HUB")
++        self.resize(620, 650)
++        layout = QVBoxLayout(self)
++        self.source = str(source)
++        self.preview = CropPreview()
++        self.preview.setMinimumSize(420, 460)
++        self.preview.focus_x, self.preview.focus_y, self.preview.zoom = focus_x, focus_y, zoom
++        self.preview.on_change = self.refresh_preview
++        layout.addWidget(self.preview, 1)
++        layout.addWidget(QLabel("Перетаскивайте фото мышью. Стрелки — точная подстройка; колёсико — масштаб."))
++        controls = QGridLayout()
++        for label, dx, dy, r, c in [
++            ("↑", 0, 0.012, 0, 1), ("←", 0.012, 0, 1, 0),
++            ("↓", 0, -0.012, 1, 1), ("→", -0.012, 0, 1, 2)
++        ]:
++            btn = QPushButton(label); btn.setMaximumWidth(64)
++            btn.clicked.connect(lambda checked=False, x=dx, y=dy: self.nudge(x, y))
++            controls.addWidget(btn, r, c)
++        layout.addLayout(controls)
++        row = QHBoxLayout()
++        reset = QPushButton("Сбросить"); reset.clicked.connect(self.preview.reset_crop)
++        row.addWidget(reset); row.addStretch()
++        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
++        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
++        row.addWidget(buttons); layout.addLayout(row)
++        self.refresh_preview()
++
++    def refresh_preview(self):
++        try:
++            im, _, _ = make_photo(self.source, VNUKOVO_PHOTO_WIDTH_CM, VNUKOVO_PHOTO_HEIGHT_CM,
++                110, "Заполнить (обрезать)", self.preview.focus_x, self.preview.focus_y, self.preview.zoom)
++            buf = io.BytesIO(); im.save(buf, "PNG")
++            pix = QPixmap.fromImage(QImage.fromData(buf.getvalue())).scaled(
++                self.preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
++            self.preview.setPixmap(pix); im.close(); buf.close()
++        except Exception:
++            logging.exception("Employee crop preview failed")
++
++    def nudge(self, dx, dy):
++        self.preview.focus_x = min(1.0, max(0.0, self.preview.focus_x + dx))
++        self.preview.focus_y = min(1.0, max(0.0, self.preview.focus_y + dy))
++        self.refresh_preview()
++
++    def values(self):
++        return self.preview.focus_x, self.preview.focus_y, self.preview.zoom
++
++
+ class EmployeeDialog(QDialog):
+     def __init__(self, parent=None, record=None):
+         super().__init__(parent)
+@@ -260,11 +315,17 @@
+         form = QFormLayout(self)
+         record = dict(record) if record else {}
+         self.full_name = QLineEdit(record.get("full_name", ""))
+-        self.organization = QLineEdit(record.get("organization", "ООО \"Пирог Улыбка\""))
++        self.organization = QLineEdit(record.get("organization", ""))
+         self.department = QLineEdit(record.get("department", ""))
+         self.position = QLineEdit(record.get("position", ""))
+         self.badge_number = QLineEdit(record.get("badge_number", ""))
+         self.valid_until = QLineEdit(record.get("valid_until", ""))
++        self.issue_date = QDateEdit()
++        self.issue_date.setCalendarPopup(True)
++        self.issue_date.setDisplayFormat("dd.MM.yyyy")
++        raw_issue = record.get("issue_date") or datetime.now().strftime("%d.%m.%Y")
++        parsed_issue = QDate.fromString(raw_issue, "dd.MM.yyyy")
++        self.issue_date.setDate(parsed_issue if parsed_issue.isValid() else QDate.currentDate())
+         self.photo_path = QLineEdit(record.get("photo_path", ""))
+         photo_row = QHBoxLayout(); photo_row.addWidget(self.photo_path)
+         browse = QPushButton("Выбрать…")
+@@ -276,6 +337,7 @@
+         form.addRow("Подразделение", self.department)
+         form.addRow("Должность", self.position)
+         form.addRow("Номер пропуска", self.badge_number)
++        form.addRow("Дата выдачи пропуска", self.issue_date)
+         form.addRow("Действует до (ДД.ММ.ГГГГ)", self.valid_until)
+         form.addRow("Исходная фотография", photo_wrap)
+         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+@@ -290,6 +352,7 @@
+         return {"full_name": self.full_name.text().strip(), "organization": self.organization.text().strip(),
+                 "department": self.department.text().strip(), "position": self.position.text().strip(),
+                 "badge_number": self.badge_number.text().strip(), "valid_until": self.valid_until.text().strip(),
++                "issue_date": self.issue_date.date().toString("dd.MM.yyyy"),
+                 "photo_path": self.photo_path.text().strip()}
+ 
+ class MainWindow(QMainWindow):
+@@ -494,8 +557,11 @@
+         emp = QWidget(); el = QVBoxLayout(emp)
+         intro_emp = QLabel("Локальный реестр сотрудников Внуково. Данные хранятся в SQLite на этом компьютере; портреты готовятся примерно 21,8 × 29,0 мм / 300 DPI по присланному скриншоту CR80. Перед тиражом сверьте точный размер Image в свойствах элемента HUB.")
+         intro_emp.setWordWrap(True); el.addWidget(intro_emp)
+-        self.employee_table = QTableWidget(0, 6)
+-        self.employee_table.setHorizontalHeaderLabels(["ID", "ФИО", "Организация", "Должность", "№ пропуска", "Действует до"])
++        self.number_status = QLabel("Предыдущая нумерация: —    Следующий номер: —")
++        self.number_status.setObjectName("muted")
++        el.addWidget(self.number_status)
++        self.employee_table = QTableWidget(0, 7)
++        self.employee_table.setHorizontalHeaderLabels(["ID", "ФИО", "Организация", "Должность", "№ пропуска", "Дата выдачи", "Действует до"])
+         self.employee_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+         self.employee_table.setSelectionMode(QAbstractItemView.SingleSelection)
+         self.employee_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+@@ -517,11 +583,9 @@
+         open_hist = QPushButton("Открыть папку"); open_hist.clicked.connect(self.open_output)
+         clear_hist = QPushButton("Очистить историю"); clear_hist.clicked.connect(self.clear_history)
+         hrow.addWidget(refresh); hrow.addWidget(open_hist); hrow.addWidget(clear_hist); hl.addLayout(hrow)
+-        tabs.addTab(hist, "История")
+ 
+         about = QWidget(); abl = QVBoxLayout(about)
+         abl.addWidget(QLabel("<h2>PSразмер изображений PRO</h2><p>Универсальный редактор размера изображений и фотографий: для паспорта, ID-карты, визы, пропуска, печати и публикации в интернете.</p><p>Быстрые шаблоны размеров, точные сантиметры и DPI, сохранение одного фото через «Сохранить как…» или пакетный экспорт.</p><p>Логи: logs/psrazmer.log<br>Настройки и история: data/</p><p>Пароли и данные Magicard HUB программа не запрашивает и не хранит.</p>"))
+-        tabs.addTab(about, "О программе")
+ 
+         # Keep button labels readable at different window sizes and Windows DPI scales.
+         for button in self.findChildren(QPushButton):
+@@ -867,10 +931,11 @@
+             rows = con.execute("SELECT * FROM employees ORDER BY full_name COLLATE NOCASE").fetchall()
+         self.employee_table.setRowCount(len(rows))
+         for r, rec in enumerate(rows):
+-            values = [rec["id"], rec["full_name"], rec["organization"], rec["position"], rec["badge_number"], rec["valid_until"]]
++            values = [rec["id"], rec["full_name"], rec["organization"], rec["position"], rec["badge_number"], rec["issue_date"], rec["valid_until"]]
+             for c, value in enumerate(values):
+                 self.employee_table.setItem(r, c, QTableWidgetItem(str(value or "")))
+         self.employee_table.resizeRowsToContents()
++        self.refresh_number_status()
+ 
+     def selected_employee_id(self):
+         row = self.employee_table.currentRow() if hasattr(self, "employee_table") else -1
+@@ -886,16 +951,63 @@
+             rec = con.execute("SELECT * FROM employees WHERE id=?", (emp_id,)).fetchone()
+         return dict(rec) if rec else None
+ 
++    def next_badge_number(self):
++        with db_connect() as con:
++            values = [str(r[0]).strip() for r in con.execute(
++                "SELECT badge_number FROM employees WHERE badge_number IS NOT NULL AND badge_number<>''"
++            ).fetchall()]
++        numeric = [(int(v), len(v)) for v in values if v.isdigit()]
++        stored_last = int(self.settings.get("last_badge_number", 0) or 0)
++        stored_width = int(self.settings.get("badge_number_width", 0) or 0)
++        if numeric:
++            highest, width = max(numeric, key=lambda x: x[0])
++            last = max(highest, stored_last)
++            return str(last + 1).zfill(max(width, stored_width))
++        return str(max(stored_last + 1, int(self.settings.get("badge_start_number", 1)))).zfill(stored_width)
++
++    def sync_last_badge_number(self):
++        with db_connect() as con:
++            vals = [str(r[0]).strip() for r in con.execute(
++                "SELECT badge_number FROM employees WHERE badge_number IS NOT NULL AND badge_number<>''"
++            ).fetchall()]
++        numeric = [(int(v), len(v)) for v in vals if v.isdigit()]
++        stored = int(self.settings.get("last_badge_number", 0) or 0)
++        stored_width = int(self.settings.get("badge_number_width", 0) or 0)
++        last = max([stored] + [n for n, _ in numeric])
++        width = max([stored_width] + [w for n, w in numeric if n == last])
++        if last != stored or width != stored_width:
++            self.settings["last_badge_number"] = last
++            self.settings["badge_number_width"] = width
++            save_json(SETTINGS_FILE, self.settings)
++
++    def refresh_number_status(self):
++        if not hasattr(self, "number_status"):
++            return
++        self.sync_last_badge_number()
++        previous = self.settings.get("last_badge_number", "—")
++        self.number_status.setText(
++            f"Предыдущая нумерация: {previous}    "
++            f"Следующий номер: {self.next_badge_number()}"
++        )
++
+     def add_employee(self):
+-        dlg = EmployeeDialog(self)
++        dlg = EmployeeDialog(self, {"badge_number": self.next_badge_number()})
+         if dlg.exec() != QDialog.Accepted: return
+         data = dlg.values()
++        if not data["badge_number"]:
++            data["badge_number"] = self.next_badge_number()
+         if not data["full_name"]:
+             QMessageBox.warning(self, APP_NAME, "Заполните ФИО сотрудника."); return
++        with db_connect() as con:
++            duplicate = con.execute("SELECT 1 FROM employees WHERE badge_number=? AND badge_number<>''",
++                                    (data["badge_number"],)).fetchone()
++        if duplicate:
++            QMessageBox.warning(self, APP_NAME, f"Номер пропуска {data['badge_number']} уже используется.")
++            return
+         now = datetime.now().isoformat(timespec="seconds")
+         with db_connect() as con:
+-            con.execute("INSERT INTO employees(full_name,organization,department,position,badge_number,valid_until,photo_path,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+-                (*[data[k] for k in ("full_name","organization","department","position","badge_number","valid_until","photo_path")], now, now))
++            con.execute("INSERT INTO employees(full_name,organization,department,position,badge_number,valid_until,photo_path,issue_date,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
++                (*[data[k] for k in ("full_name","organization","department","position","badge_number","valid_until","photo_path","issue_date")], now, now))
+         self.refresh_employees()
+ 
+     def edit_employee(self):
+@@ -905,10 +1017,18 @@
+         if dlg.exec() != QDialog.Accepted: return
+         data = dlg.values()
+         if not data["full_name"]: QMessageBox.warning(self, APP_NAME, "Заполните ФИО."); return
++        if not data["badge_number"]:
++            data["badge_number"] = self.next_badge_number()
++        with db_connect() as con:
++            duplicate = con.execute("SELECT 1 FROM employees WHERE badge_number=? AND id<>? AND badge_number<>''",
++                                    (data["badge_number"], rec["id"])).fetchone()
++        if duplicate:
++            QMessageBox.warning(self, APP_NAME, f"Номер пропуска {data['badge_number']} уже используется.")
++            return
+         now = datetime.now().isoformat(timespec="seconds")
+         with db_connect() as con:
+-            con.execute("UPDATE employees SET full_name=?,organization=?,department=?,position=?,badge_number=?,valid_until=?,photo_path=?,updated_at=? WHERE id=?",
+-                (*[data[k] for k in ("full_name","organization","department","position","badge_number","valid_until","photo_path")], now, rec["id"]))
++            con.execute("UPDATE employees SET full_name=?,organization=?,department=?,position=?,badge_number=?,valid_until=?,photo_path=?,issue_date=?,updated_at=? WHERE id=?",
++                (*[data[k] for k in ("full_name","organization","department","position","badge_number","valid_until","photo_path","issue_date")], now, rec["id"]))
+         self.refresh_employees()
+ 
+     def delete_employee(self):
+@@ -927,7 +1047,11 @@
+         try:
+             focus = detect_face_focus(str(src))
+             fx, fy = (focus[0], focus[1]) if focus else (0.5, 0.5)
+-            im, w, h = make_photo(str(src), VNUKOVO_PHOTO_WIDTH_CM, VNUKOVO_PHOTO_HEIGHT_CM, 300, "Заполнить (обрезать)", fx, fy, 1.08 if focus else 1.0)
++            crop_dlg = EmployeeCropDialog(str(src), self, fx, fy, 1.08 if focus else 1.0)
++            if crop_dlg.exec() != QDialog.Accepted:
++                return None
++            fx, fy, zoom = crop_dlg.values()
++            im, w, h = make_photo(str(src), VNUKOVO_PHOTO_WIDTH_CM, VNUKOVO_PHOTO_HEIGHT_CM, 300, "Заполнить (обрезать)", fx, fy, zoom)
+             safe = re.sub(r"[^A-Za-zА-Яа-яЁё0-9_-]+", "_", rec.get("badge_number") or str(rec["id"])).strip("_") or str(rec["id"])
+             target = OUTPUT_DIR / f"Vnukovo_{safe}_21_8x29mm_300dpi.jpg"
+             im.save(target, "JPEG", quality=96, dpi=(300,300), optimize=True)
+@@ -950,7 +1074,7 @@
+                 else: subprocess.Popen([hub])
+             if os.name == "nt": subprocess.Popen(["explorer", "/select,", str(target.resolve())])
+             else: self.open_output()
+-            QMessageBox.information(self, APP_NAME, "Фото подготовлено и выделено в Проводнике. В Magicard HUB откройте запись сотрудника и импортируйте этот JPG штатной командой. Прямое заполнение карточки зависит от версии HUB и пока не имитируется.")
++            QMessageBox.information(self, APP_NAME, "Фото подготовлено и выделено в Проводнике. Magicard HUB открыт. Откройте запись сотрудника и выберите выделенный JPG штатной командой добавления фотографии. Автоматическое заполнение поля изображения зависит от интерфейса/версии HUB и без подтверждённого API не выполняется.")
+         except Exception as e: QMessageBox.warning(self, APP_NAME, f"Не удалось открыть HUB или Проводник:\n{e}")
+ 
+     def export_employee_card(self):
+@@ -974,6 +1098,7 @@
+         d.text((55,320), name[:32], fill="#111111", font=font(34,True))
+         d.text((55,382), (rec.get("department") or "")[:36], fill="#111111", font=font(30,True))
+         d.text((55,438), (rec.get("position") or "Должность")[:36], fill="#222222", font=font(28))
++        d.text((55,510), f"выдан {rec.get('issue_date') or '—'}", fill="#111111", font=font(24,True))
+         d.text((270,560), f"действует до {rec.get('valid_until') or '—'}", fill="#111111", font=font(26,True))
+         photo_path = Path(rec.get("photo_path") or "")
+         prepared = OUTPUT_DIR / f"Vnukovo_{re.sub(r'[^A-Za-zА-Яа-яЁё0-9_-]+','_', rec.get('badge_number') or str(rec['id']))}.jpg"
+@@ -987,7 +1112,6 @@
+         else:
+             d.rectangle((710,45,950,345), outline="#8796a5", width=3)
+             d.text((755,180), "ФОТО", fill="#8796a5", font=font(28,True))
+-        d.text((730,380), "CATERING", fill="#3d579f", font=font(34,True))
+         path, _ = QFileDialog.getSaveFileName(self, "Сохранить предварительный макет карты", str(OUTPUT_DIR / "card_preview.png"), "PNG (*.png)")
+         if path:
+             card.save(path, "PNG", dpi=(300,300))
+@@ -1002,14 +1126,31 @@
+                 sample = f.read(2048); f.seek(0)
+                 dialect = csv.Sniffer().sniff(sample, delimiters=";,\t")
+                 reader = csv.DictReader(f, dialect=dialect)
+-                aliases = {"ФИО":"full_name", "Организация":"organization", "Подразделение":"department", "Должность":"position", "Номер пропуска":"badge_number", "Действует до":"valid_until", "Фото":"photo_path"}
++                aliases = {
++                    "ФИО":"full_name", "FullName":"full_name",
++                    "Организация":"organization", "Organization":"organization",
++                    "Подразделение":"department", "Department":"department",
++                    "Должность":"position", "Position":"position",
++                    "Номер пропуска":"badge_number", "BadgeNumber":"badge_number",
++                    "Дата выдачи":"issue_date", "IssueDate":"issue_date",
++                    "Действует до":"valid_until", "ValidUntil":"valid_until",
++                    "Фото":"photo_path", "PhotoFile":"photo_path"
++                }
++                next_auto_text = self.next_badge_number()
++                next_auto_number = int(next_auto_text)
++                auto_width = len(next_auto_text)
+                 with db_connect() as con:
+                     for row in reader:
+                         data = {aliases.get(k, k): (v or "").strip() for k,v in row.items() if k}
+                         if not data.get("full_name"): continue
+                         now = datetime.now().isoformat(timespec="seconds")
+-                        con.execute("INSERT INTO employees(full_name,organization,department,position,badge_number,valid_until,photo_path,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+-                            (data.get("full_name"),data.get("organization",""),data.get("department",""),data.get("position",""),data.get("badge_number",""),data.get("valid_until",""),data.get("photo_path",""),now,now)); count += 1
++                        con.execute("INSERT INTO employees(full_name,organization,department,position,badge_number,valid_until,photo_path,issue_date,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
++                            (data.get("full_name"),data.get("organization",""),data.get("department",""),data.get("position",""),
++                             data.get("badge_number","") or str(next_auto_number).zfill(auto_width),data.get("valid_until",""),
++                             data.get("photo_path",""),data.get("issue_date") or datetime.now().strftime("%d.%m.%Y"),now,now))
++                        if not data.get("badge_number"):
++                            next_auto_number += 1
++                        count += 1
+             self.refresh_employees(); QMessageBox.information(self, APP_NAME, f"Импортировано записей: {count}")
+         except Exception as e: QMessageBox.critical(self, APP_NAME, f"Ошибка импорта CSV:\n{e}")
+ 
+@@ -1027,7 +1168,7 @@
+         try:
+             with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                 writer = csv.writer(f, delimiter=";")
+-                writer.writerow(["FullName", "Organization", "Department", "Position", "BadgeNumber", "ValidUntil", "PhotoFile"])
++                writer.writerow(["FullName", "Organization", "Department", "Position", "BadgeNumber", "IssueDate", "ValidUntil", "PhotoFile"])
+                 for rec in rows:
+                     photo_out = ""
+                     source = Path(rec.get("photo_path") or "")
+@@ -1042,7 +1183,7 @@
+                     else:
+                         no_photo += 1
+                     writer.writerow([rec.get("full_name", ""), rec.get("organization", ""), rec.get("department", ""),
+-                                     rec.get("position", ""), rec.get("badge_number", ""), rec.get("valid_until", ""), photo_out])
++                                     rec.get("position", ""), rec.get("badge_number", ""), rec.get("issue_date", ""), rec.get("valid_until", ""), photo_out])
+                     count += 1
+             QMessageBox.information(self, APP_NAME,
+                 f"Подготовлен CSV-пакет: {count} записей\nБез исходного фото: {no_photo}\nCSV: {path}\n\nВ Magicard HUB используйте штатный импорт CSV/Excel и сопоставьте текстовые поля. Поле PhotoFile содержит путь к локальному JPG; возможность автоматического связывания этого столбца с image-полем зависит от конкретного мастера импорта HUB и должна быть проверена.")
+@@ -1053,8 +1194,8 @@
+     def export_employees_csv(self):
+         path, _ = QFileDialog.getSaveFileName(self, "Экспорт сотрудников CSV", str(OUTPUT_DIR / "employees.csv"), "CSV (*.csv)")
+         if not path: return
+-        with db_connect() as con: rows = con.execute("SELECT full_name,organization,department,position,badge_number,valid_until,photo_path FROM employees ORDER BY full_name").fetchall()
+-        headers = ["ФИО","Организация","Подразделение","Должность","Номер пропуска","Действует до","Фото"]
++        with db_connect() as con: rows = con.execute("SELECT full_name,organization,department,position,badge_number,issue_date,valid_until,photo_path FROM employees ORDER BY full_name").fetchall()
++        headers = ["ФИО","Организация","Подразделение","Должность","Номер пропуска","Дата выдачи","Действует до","Фото"]
+         try:
+             with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                 writer = csv.writer(f, delimiter=";"); writer.writerow(headers)

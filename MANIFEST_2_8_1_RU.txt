@@ -1,0 +1,21 @@
+PSразмер PRO 2.8.1 — состав изменений
+
+Добавлены файлы:
+  + app/updater.py
+  + app/version_utils.py
+  + make_update_package.py
+  + UPDATE_SYSTEM_RU.md
+  + README_2_8_1_RU.md
+  + CHANGES_2_8_1_RU.md
+  + DIFF_2_8_TO_2_8_1_UPDATE.patch
+
+Изменены файлы:
+  * app/main.py
+  * PSrazmer_PRO.iss
+  * build_windows.bat
+  * tests/test_core_invariants.py
+  * CHANGES_INSTALLER_2_8_RU.md
+
+Удалённых файлов: нет.
+
+Резервные пользовательские данные: Config, Logs, Cache, History, Presets, Exports, Temp, Backups, Employees и Templates не включаются в пакет автообновления.

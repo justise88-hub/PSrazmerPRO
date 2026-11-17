@@ -1,0 +1,87 @@
+--- a/app/main.py (2.7)
++++ b/app/main.py (2.8)
+@@ -11,12 +11,12 @@
+     QListWidgetItem, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget, QSpinBox,
+     QDoubleSpinBox, QComboBox, QCheckBox, QLineEdit, QMessageBox, QGroupBox,
+     QSplitter, QProgressBar, QPlainTextEdit, QFormLayout, QAbstractItemView, QSizePolicy,
+-    QTableWidget, QTableWidgetItem, QDialog, QDialogButtonBox, QDateEdit, QHeaderView
++    QTableWidget, QTableWidgetItem, QDialog, QDialogButtonBox, QDateEdit, QHeaderView, QMenu
+ )
+ from openpyxl import Workbook
+ from openpyxl.drawing.image import Image as XLImage
+ 
+-APP_NAME = "PSразмер PRO 2.7 — Внуково / Magicard HUB"
++APP_NAME = "PSразмер PRO 2.8 — Внуково / Magicard HUB"
+ DEVELOPER_NAME = "P.Sveshnikov"
+ 
+ # Estimated portrait frame measured proportionally from the user's HUB screenshot.
+@@ -605,16 +605,16 @@
+         self.prepare_btn = QPushButton("Подготовить фото")
+         self.prepare_btn.setToolTip("Подготовить выбранные фотографии или все фотографии")
+         self.prepare_btn.clicked.connect(self.prepare_all)
+-        self.export_btn = QPushButton("Сохранить фото…")
++        self.export_btn = QPushButton("Сохранить выбранное…")
+         self.export_btn.setToolTip("Сохранить выбранное фото как…")
+         self.export_btn.clicked.connect(self.save_one_as)
+-        self.export_all_btn = QPushButton("Сохранить все…")
+-        self.export_all_btn.setToolTip("Сохранить все фотографии в папку…")
+-        self.export_all_btn.clicked.connect(self.export_all)
+-        self.xlsx_btn = QPushButton("Excel-каталог")
+-        self.xlsx_btn.setToolTip("Создать Excel-каталог")
+-        self.xlsx_btn.clicked.connect(self.export_xlsx)
+-        actions.addWidget(self.prepare_btn); actions.addWidget(self.export_btn); actions.addWidget(self.export_all_btn); actions.addWidget(self.xlsx_btn)
++        more_photo_btn = QPushButton("Дополнительно ▾")
++        more_photo_menu = QMenu(more_photo_btn)
++        more_photo_menu.addAction("Сохранить все фотографии…", self.export_all)
++        more_photo_menu.addAction("Создать Excel-каталог", self.export_xlsx)
++        more_photo_menu.addSeparator()
++        more_photo_btn.setMenu(more_photo_menu)
++        actions.addWidget(self.prepare_btn); actions.addWidget(self.export_btn); actions.addWidget(more_photo_btn)
+         root.addLayout(actions)
+         self.progress = QProgressBar(); self.progress.setValue(0); root.addWidget(self.progress)
+         tabs.addTab(prep, "Подготовка фото")
+@@ -661,10 +661,21 @@
+         self.employee_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+         el.addWidget(self.employee_table, 1)
+         erow = QHBoxLayout()
+-        for label, slot in [("＋ Добавить", self.add_employee), ("Изменить", self.edit_employee), ("Удалить", self.delete_employee), ("Подготовить фото", self.prepare_employee_photo), ("Создать пропуск (.card)", self.export_employee_to_hub_template), ("Пакет .card", self.export_selected_employees_to_hub), ("Открыть HUB с фото", self.send_employee_to_hub), ("Экспорт карточки PNG", self.export_employee_card), ("Импорт CSV", self.import_employees_csv), ("Экспорт CSV", self.export_employees_csv), ("CSV для HUB + фото", self.export_hub_bundle_csv)]:
++        for label, slot in [("＋ Добавить", self.add_employee), ("Изменить", self.edit_employee), ("Удалить", self.delete_employee), ("Подготовить фото", self.prepare_employee_photo), ("Создать пропуск (.card)", self.export_employee_to_hub_template)]:
+             b = QPushButton(label); b.clicked.connect(slot); erow.addWidget(b)
++        more_employee_btn = QPushButton("Дополнительно ▾")
++        more_employee_menu = QMenu(more_employee_btn)
++        more_employee_menu.addAction("Пакетное создание .card", self.export_selected_employees_to_hub)
++        more_employee_menu.addAction("Открыть HUB с фото", self.send_employee_to_hub)
++        more_employee_menu.addAction("Экспорт карточки PNG", self.export_employee_card)
++        more_employee_menu.addSeparator()
++        more_employee_menu.addAction("Импорт сотрудников из CSV…", self.import_employees_csv)
++        more_employee_menu.addAction("Экспорт сотрудников в CSV…", self.export_employees_csv)
++        more_employee_menu.addAction("Пакет CSV для HUB + фото…", self.export_hub_bundle_csv)
++        more_employee_btn.setMenu(more_employee_menu)
++        erow.addWidget(more_employee_btn)
+         el.addLayout(erow)
+-        tabs.addTab(emp, "Сотрудники Внуково")
++        tabs.addTab(emp, "Сотрудники")
+         self.refresh_employees()
+ 
+         hist = QWidget(); hl = QVBoxLayout(hist)
+@@ -684,7 +695,9 @@
+         clear_hist = QPushButton("Очистить историю файлов"); clear_hist.clicked.connect(self.clear_history)
+         backup_btn = QPushButton("Создать резервную копию базы"); backup_btn.clicked.connect(self.manual_backup)
+         hrow.addWidget(refresh); hrow.addWidget(open_hist); hrow.addWidget(clear_hist); hrow.addWidget(backup_btn); hl.addLayout(hrow)
+-        tabs.addTab(hist, "История и резервные копии")
++        tabs.addTab(hist, "История")
++        # Put the employee register first: it is the starting point for the common badge workflow.
++        tabs.tabBar().moveTab(2, 0)
+         tabs.setCurrentWidget(emp)
+ 
+         about = QWidget(); abl = QVBoxLayout(about)
+@@ -695,6 +708,9 @@
+             button.setMinimumHeight(36)
+             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+             button.setToolTip(button.toolTip() or button.text())
++        # Navigation labels stay short; full operation names are available in menu items/tooltips.
++        tabs.setDocumentMode(True)
++        tabs.setMovable(False)
+ 
+         # Long explanatory labels wrap instead of being cut off.
+         for label in self.findChildren(QLabel):

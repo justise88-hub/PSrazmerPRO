@@ -1,0 +1,16 @@
+--- /dev/null
++++ b/PSrazmer_PRO.iss
+@@
++; Inno Setup 6 installer script. See INSTALL_WINDOWS_RU.md.
+--- /dev/null
++++ b/build_installer.bat
+@@
++; Windows batch wrapper to compile the Inno Setup installer.
+--- a/build_windows.bat
++++ b/build_windows.bat
+@@
++; Reworked PyInstaller build: onedir, resource/template inclusion and error checks.
+--- /dev/null
++++ b/INSTALL_WINDOWS_RU.md
+@@
++; Windows installation and build instructions.

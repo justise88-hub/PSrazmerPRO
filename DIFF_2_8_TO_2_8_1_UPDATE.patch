@@ -1,0 +1,755 @@
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/CHANGES_2_8_1_RU.md /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/CHANGES_2_8_1_RU.md
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/CHANGES_2_8_1_RU.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/CHANGES_2_8_1_RU.md	2026-11-17 19:53:48.348842443 +0000
+@@ -0,0 +1,25 @@
++# PSразмер PRO 2.8.1 — обновление программы
++
++## Добавлено
++- Меню **Программа → Проверить обновления…**.
++- Проверка доступной версии по HTTPS-манифесту.
++- Показ списка изменений перед установкой.
++- Загрузка ZIP-пакета с контролем SHA-256.
++- Проверка структуры архива и ограничение размера/числа файлов.
++- Установка после закрытия приложения.
++- Резервное копирование заменяемых файлов с попыткой отката при ошибке.
++- Исключение пользовательских папок из обновления: Config, Logs, Cache, History, Presets, Exports, Temp, Backups, Employees, Templates.
++- Скрипт формирования ZIP и manifest.json для публикации обновлений.
++
++## Изменено
++- Сборка PyInstaller использует корневую структуру onedir, совпадающую с путями ресурсов и пользовательских данных приложения.
++- Версия приложения и установщика повышена до 2.8.1.
++
++## Файлы
++- Добавлены: `app/updater.py`, `app/version_utils.py`, `make_update_package.py`, `UPDATE_SYSTEM_RU.md`, `CHANGES_2_8_1_RU.md`.
++- Изменены: `app/main.py`, `PSrazmer_PRO.iss`, `build_windows.bat`, `tests/test_core_invariants.py`, `CHANGES_INSTALLER_2_8_RU.md`.
++
++## Проверки
++- `py_compile` для изменённых Python-файлов — успешно.
++- `unittest` — 3 теста успешно.
++- Окно обновления, скачивание с реального HTTPS-сервера и установка на Windows пока не проверялись: в текущей среде нет PySide6 и Windows.
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/CHANGES_INSTALLER_2_8_RU.md /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/CHANGES_INSTALLER_2_8_RU.md
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/CHANGES_INSTALLER_2_8_RU.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/CHANGES_INSTALLER_2_8_RU.md	2026-11-17 19:53:29.109059939 +0000
+@@ -0,0 +1,23 @@
++# Подготовка установщика Windows — PSразмер PRO 2.8
++
++## Добавлено
++- `PSrazmer_PRO.iss` — сценарий установщика Inno Setup 6 на русском языке.
++- `build_installer.bat` — сборка `PSrazmer_PRO_2_8_Setup.exe`.
++- `INSTALL_WINDOWS_RU.md` — пошаговая инструкция установки и сборки.
++- Обновлён `build_windows.bat`: сборка PyInstaller в режиме onedir, с ресурсами, шаблоном HUB, PySide6 и OpenCV.
++
++## Установка и сохранность данных
++- Установка без прав администратора в `%LOCALAPPDATA%\Programs\PSразмер PRO`.
++- Ярлык в меню «Пуск», дополнительная опция ярлыка рабочего стола.
++- Пользовательские данные `Employees`, `Config`, `Exports`, `Backups`, `Logs`, `History` при удалении программы намеренно сохраняются.
++- Magicard HUB 2.0.6 и драйвер Magicard 300 устанавливаются отдельно.
++
++## Ограничения текущей сборки
++Этот архив содержит исходный проект и сценарии для создания Windows Setup. Сам `Setup.exe` должен быть собран на Windows 10/11 x64 с Python 3.11/3.12 и Inno Setup 6; в текущей среде нельзя достоверно собрать и проверить Windows-установщик. Не выдаём непроверенный бинарный файл за готовый установщик.
++
++## Обновление приложения
++- Добавлено меню «Программа → Проверить обновления…».
++- Проверка HTTPS-манифеста, скачивание ZIP, SHA-256 контроль, безопасная распаковка и резервирование заменяемых файлов перед установкой.
++- Пользовательские данные и папка шаблонов исключены из обновления.
++- Добавлены `make_update_package.py` и `UPDATE_SYSTEM_RU.md` для подготовки и публикации обновлений.
++- PyInstaller собирает onedir-пакет в корневую структуру, соответствующую путям данных приложения.
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/DIFF_INSTALLER_2_8.patch /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/DIFF_INSTALLER_2_8.patch
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/DIFF_INSTALLER_2_8.patch	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/DIFF_INSTALLER_2_8.patch	2026-11-17 19:49:29.081428209 +0000
+@@ -0,0 +1,16 @@
++--- /dev/null
+++++ b/PSrazmer_PRO.iss
++@@
+++; Inno Setup 6 installer script. See INSTALL_WINDOWS_RU.md.
++--- /dev/null
+++++ b/build_installer.bat
++@@
+++; Windows batch wrapper to compile the Inno Setup installer.
++--- a/build_windows.bat
+++++ b/build_windows.bat
++@@
+++; Reworked PyInstaller build: onedir, resource/template inclusion and error checks.
++--- /dev/null
+++++ b/INSTALL_WINDOWS_RU.md
++@@
+++; Windows installation and build instructions.
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/INSTALL_WINDOWS_RU.md /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/INSTALL_WINDOWS_RU.md
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/INSTALL_WINDOWS_RU.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/INSTALL_WINDOWS_RU.md	2026-11-17 19:49:12.043374679 +0000
+@@ -0,0 +1,22 @@
++# Установка PSразмер PRO 2.8 в Windows
++
++## Для пользователя
++После сборки разработчиком запустите `PSrazmer_PRO_2_8_Setup.exe`, нажмите «Далее» и завершите установку. Установщик создаёт ярлык в меню «Пуск»; ярлык на рабочем столе можно включить в дополнительных параметрах. Для установки не нужны права администратора.
++
++## Сборка установщика на Windows 10/11 x64
++1. Установите Python 3.11 или 3.12 x64 и отметьте добавление Python в PATH.
++2. Установите Inno Setup 6 (https://jrsoftware.org/isinfo.php).
++3. Распакуйте весь архив в обычную папку, например `C:\Build\PSrazmer_PRO`.
++4. Запустите `build_windows.bat`. Скрипт создаст виртуальное окружение, установит зависимости и соберёт приложение в `dist\PSrazmer_PRO`.
++5. Запустите `build_installer.bat`. Готовый установщик появится в `installer_output\PSrazmer_PRO_2_8_Setup.exe`.
++
++## Данные и обновление
++Программа хранит рабочие данные рядом с EXE. Поэтому установщик размещает приложение в `%LOCALAPPDATA%\Programs\PSразмер PRO`, где у обычного пользователя есть права записи. При удалении программы пользовательские каталоги с базой сотрудников, настройками, фотографиями, экспортами и резервными копиями намеренно не удаляются. Перед обновлением всё равно рекомендуется создать резервную копию через программу.
++
++## Требования
++Windows 10/11 x64. Magicard HUB 2.0.6 устанавливается отдельно. Для печати нужен установленный драйвер Magicard 300.
++
++## Разработчик
++P.Sveshnikov
++
++Примечание: исходный проект не содержит подписанного цифрового сертификата. Windows SmartScreen может показать предупреждение для самостоятельно собранного установщика. Для коммерческого распространения рекомендуется подписывать Setup.exe сертификатом Authenticode.
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/PSrazmer_PRO.iss /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/PSrazmer_PRO.iss
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/PSrazmer_PRO.iss	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/PSrazmer_PRO.iss	2026-11-17 19:53:48.135787429 +0000
+@@ -0,0 +1,45 @@
++﻿#define MyAppName "PSразмер PRO"
++#define MyAppVersion "2.8.1"
++#define MyAppPublisher "P.Sveshnikov"
++#define MyAppExeName "PSrazmer_PRO.exe"
++
++[Setup]
++AppId={{8C34C71A-7B25-4F31-A77E-9D2D0F9D28B8}
++AppName={#MyAppName}
++AppVersion={#MyAppVersion}
++AppPublisher={#MyAppPublisher}
++DefaultDirName={localappdata}\Programs\PSrazmer PRO
++DefaultGroupName={#MyAppName}
++DisableProgramGroupPage=yes
++PrivilegesRequired=lowest
++OutputDir=installer_output
++OutputBaseFilename=PSrazmer_PRO_2_8_1_Setup
++SetupIconFile=Resources\PSrazmer.ico
++UninstallDisplayIcon={app}\{#MyAppExeName}
++ArchitecturesInstallIn64BitMode=x64
++ArchitecturesAllowed=x64
++Compression=lzma2/ultra64
++SolidCompression=yes
++WizardStyle=modern
++CloseApplications=yes
++RestartApplications=no
++UsePreviousAppDir=yes
++
++[Languages]
++Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
++
++[Tasks]
++Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительные параметры:"; Flags: unchecked
++
++[Files]
++Source: "dist\PSrazmer_PRO\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
++
++[Icons]
++Name: "{autoprograms}\PSразмер PRO"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
++Name: "{autodesktop}\PSразмер PRO"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
++
++[Run]
++Filename: "{app}\{#MyAppExeName}"; Description: "Запустить PSразмер PRO"; Flags: postinstall nowait skipifsilent
++
++[UninstallDelete]
++; Пользовательские данные (Employees, Config, Exports, Backups и т.п.) намеренно сохраняются.
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/README_2_8_1_RU.md /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/README_2_8_1_RU.md
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/README_2_8_1_RU.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/README_2_8_1_RU.md	2026-11-17 19:54:08.076589654 +0000
+@@ -0,0 +1,18 @@
++# PSразмер PRO 2.8.1
++
++В версии добавлено окно обновления: **Программа → Проверить обновления…**.
++
++## Для пользователя
++
++1. Установите сборку программы обычным способом.
++2. Получите у разработчика HTTPS-адрес `manifest.json`.
++3. Откройте меню **Программа → Проверить обновления…**.
++4. Вставьте адрес манифеста и нажмите **Проверить обновления**.
++5. Если новая версия доступна, просмотрите список изменений и нажмите **Скачать и установить**.
++6. Подтвердите установку. Программа закроется, обновится и запустится снова.
++
++Обновление не отправляет фотографии, данные сотрудников, базу SQLite или настройки на сервер. Локальные папки данных и шаблоны не перезаписываются. Перед заменой файлов программы создаётся резервная копия.
++
++## Важно
++
++На данный момент адрес сервера обновлений не предустановлен. До публикации разработчиком HTTPS-манифеста проверка обновлений работать не будет. Подробная инструкция по подготовке и публикации выпусков находится в `UPDATE_SYSTEM_RU.md`.
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/UPDATE_SYSTEM_RU.md /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/UPDATE_SYSTEM_RU.md
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/UPDATE_SYSTEM_RU.md	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/UPDATE_SYSTEM_RU.md	2026-11-17 19:53:48.135919383 +0000
+@@ -0,0 +1,40 @@
++# Обновление PSразмер PRO — инструкция разработчику
++
++## Как работает обновление
++
++В меню **Программа → Проверить обновления…** пользователь указывает HTTPS-адрес `manifest.json`. Программа получает номер версии и список изменений. После подтверждения загружает ZIP, проверяет SHA-256, безопасно распаковывает только каталог `program/`, закрывает приложение, сохраняет резервные копии заменяемых файлов и накладывает новую сборку. При ошибке копирования скрипт пытается восстановить резервную копию.
++
++Локальные данные не входят в пакет обновления и не перезаписываются: `Config`, `Logs`, `Cache`, `History`, `Presets`, `Exports`, `Temp`, `Backups`, `Employees`, `Templates`. Фотографии сотрудников и база SQLite не отправляются на сервер.
++
++## Подготовка выпуска новой версии
++
++1. Обновите `APP_VERSION` в `app/updater.py` и версию установщика в `PSrazmer_PRO.iss`.
++2. Соберите новую версию на Windows 10/11 x64: `build_windows.bat`.
++3. Создайте пакет, например:
++
++   ```bat
++   python make_update_package.py 2.8.2 --notes "Исправления ошибок;Улучшена работа с фотографиями"
++   ```
++
++4. Появятся `update_release/PSrazmer_PRO_2.8.2_update.zip` и `update_release/manifest.json`.
++5. Загрузите оба файла в один каталог HTTPS-хостинга. URL `manifest.json` укажите пользователям или задайте в их настройках.
++
++Пример manifest:
++
++```json
++{
++  "version": "2.8.2",
++  "package": "PSrazmer_PRO_2.8.2_update.zip",
++  "sha256": "64-символьная SHA-256 сумма ZIP",
++  "notes": ["Исправления ошибок", "Улучшена работа с фотографиями"]
++}
++```
++
++`package` может быть относительным именем файла или HTTPS-ссылкой. Обязательно используйте HTTPS. SHA-256 защищает от повреждения/подмены файла при передаче относительно опубликованного манифеста, но сам по себе не заменяет цифровую подпись издателя. Для публичного коммерческого распространения следующим этапом рекомендуется подписывать установщик и обновления Authenticode-сертификатом.
++
++## Ограничения текущей реализации
++
++- Автоматическая установка доступна в собранной Windows-версии (`.exe` из PyInstaller). В режиме запуска исходного Python-кода доступна проверка, но не автоустановка.
++- Обновления не удаляют устаревшие файлы, чтобы не затронуть неизвестные пользовательские данные. Если выпуск требует удаления/переименования файлов программы, это нужно отдельно описать в миграции.
++- Папка `Templates` намеренно сохраняется. Новые шаблоны для существующих установок распространяйте отдельной миграцией, не перезаписывая пользовательские шаблоны.
++- Перед первым публичным выпуском обязательно проверить обновление на отдельном тестовом ПК с Windows и копией базы сотрудников.
+Binary files /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/__pycache__/make_update_package.cpython-313.pyc and /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/__pycache__/make_update_package.cpython-313.pyc differ
+Binary files /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/__pycache__/main.cpython-313.pyc and /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/__pycache__/main.cpython-313.pyc differ
+Binary files /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/__pycache__/updater.cpython-313.pyc and /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/__pycache__/updater.cpython-313.pyc differ
+Binary files /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/__pycache__/version_utils.cpython-313.pyc and /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/__pycache__/version_utils.cpython-313.pyc differ
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/main.py /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/main.py
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/main.py	2026-11-17 19:54:33.146367074 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/main.py	2026-11-17 19:54:07.920803447 +0000
+@@ -15,8 +15,9 @@
+ )
+ from openpyxl import Workbook
+ from openpyxl.drawing.image import Image as XLImage
++from updater import UpdateDialog, APP_VERSION
+ 
+-APP_NAME = "PSразмер PRO 2.8 — Внуково / Magicard HUB"
++APP_NAME = "PSразмер PRO 2.8.1 — Внуково / Magicard HUB"
+ DEVELOPER_NAME = "P.Sveshnikov"
+ 
+ # Estimated portrait frame measured proportionally from the user's HUB screenshot.
+@@ -716,6 +717,23 @@
+         for label in self.findChildren(QLabel):
+             label.setWordWrap(True)
+ 
++        # Обновление вынесено в отдельное меню, чтобы не перегружать рабочие вкладки.
++        program_menu = self.menuBar().addMenu("Программа")
++        update_action = program_menu.addAction("Проверить обновления…")
++        update_action.triggered.connect(self.open_update_dialog)
++        program_menu.addSeparator()
++        about_action = program_menu.addAction("О программе")
++        about_action.triggered.connect(self.show_about)
++
++    def open_update_dialog(self):
++        dialog = UpdateDialog(self, ROOT, self.settings)
++        dialog.exec()
++        self.settings["update_manifest_url"] = dialog.url_edit.text().strip()
++        save_json(SETTINGS_FILE, self.settings)
++
++    def show_about(self):
++        QMessageBox.about(self, APP_NAME, f"<h3>PSразмер PRO</h3><p>Версия {APP_VERSION}</p><p>Подготовка фотографий и карточек для Magicard HUB.</p><p><b>Разработчик:</b> {DEVELOPER_NAME}</p>")
++
+     def apply_settings(self):
+         self.hub_path.setText(self.settings.get("hub_path",""))
+         self.settings.setdefault("printer_model", "Magicard 300")
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/updater.py /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/updater.py
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/updater.py	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/updater.py	2026-11-17 19:54:07.921022699 +0000
+@@ -0,0 +1,304 @@
++"""Safe, opt-in updater for PSразмер PRO.
++
++Update manifest format (hosted over HTTPS):
++{
++  "version": "2.8.1",
++  "package": "PSrazmer_PRO_2.8.1_update.zip",
++  "sha256": "<64 hex chars>",
++  "notes": ["Исправления и улучшения"]
++}
++The ZIP must contain program/ with the new application runtime files.
++User data folders are deliberately never overwritten by the updater.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++import shutil
++import subprocess
++import sys
++import urllib.parse
++import urllib.request
++import zipfile
++from pathlib import Path, PurePosixPath
++
++from PySide6.QtCore import QThread, Signal
++from PySide6.QtWidgets import (
++    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
++    QProgressBar, QMessageBox, QPlainTextEdit
++)
++
++APP_VERSION = "2.8.1"
++USER_DATA_DIRS = {
++    "Config", "Logs", "Cache", "History", "Presets", "Exports",
++    "Temp", "Backups", "Employees", "Templates"
++}
++
++
++from version_utils import version_tuple
++
++
++class UpdateWorker(QThread):
++    succeeded = Signal(dict)
++    failed = Signal(str)
++    progress = Signal(int)
++
++    def __init__(self, manifest_url: str, action: str, staging_root: Path):
++        super().__init__()
++        self.manifest_url = manifest_url.strip()
++        self.action = action
++        self.staging_root = staging_root
++
++    def run(self):
++        try:
++            if not self.manifest_url.lower().startswith("https://"):
++                raise ValueError("Для обновлений укажите HTTPS-ссылку на manifest.json.")
++            request = urllib.request.Request(
++                self.manifest_url,
++                headers={"User-Agent": "PSrazmer-PRO-Updater/1.0", "Accept": "application/json"},
++            )
++            with urllib.request.urlopen(request, timeout=20) as response:
++                manifest = json.loads(response.read(1024 * 1024).decode("utf-8-sig"))
++            version = str(manifest["version"])
++            version_tuple(version)
++            package_url = urllib.parse.urljoin(self.manifest_url, str(manifest["package"]))
++            if urllib.parse.urlparse(package_url).scheme.lower() != "https":
++                raise ValueError("Ссылка на ZIP обновления должна использовать HTTPS.")
++            digest = str(manifest["sha256"]).lower()
++            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
++                raise ValueError("В manifest.json отсутствует корректная SHA-256 сумма.")
++            result = {"manifest": manifest, "version": version, "package_url": package_url}
++            if self.action == "download" and version_tuple(version) <= version_tuple(APP_VERSION):
++                raise ValueError("В опубликованном манифесте нет версии новее установленной. Обновление отменено.")
++            if self.action == "check":
++                self.succeeded.emit(result)
++                return
++
++            self.staging_root.mkdir(parents=True, exist_ok=True)
++            archive_path = self.staging_root / "update.zip"
++            req = urllib.request.Request(package_url, headers={"User-Agent": "PSrazmer-PRO-Updater/1.0"})
++            hasher = hashlib.sha256()
++            total = 0
++            with urllib.request.urlopen(req, timeout=60) as response, archive_path.open("wb") as out:
++                length = int(response.headers.get("Content-Length", "0") or 0)
++                while True:
++                    chunk = response.read(1024 * 256)
++                    if not chunk:
++                        break
++                    out.write(chunk)
++                    hasher.update(chunk)
++                    total += len(chunk)
++                    if total > 1024 * 1024 * 1024:
++                        raise ValueError("Размер пакета превышает допустимый лимит 1 ГБ.")
++                    if length:
++                        self.progress.emit(min(99, int(total * 100 / length)))
++            if hasher.hexdigest() != digest:
++                archive_path.unlink(missing_ok=True)
++                raise ValueError("Контрольная сумма обновления не совпала. Установка отменена.")
++
++            program_dir = self.staging_root / "program"
++            if program_dir.exists():
++                shutil.rmtree(program_dir)
++            program_dir.mkdir(parents=True)
++            with zipfile.ZipFile(archive_path) as archive:
++                members = archive.infolist()
++                if len(members) > 20000 or sum(item.file_size for item in members) > 2 * 1024 * 1024 * 1024:
++                    raise ValueError("Архив обновления превышает допустимые ограничения.")
++                for info in members:
++                    raw = PurePosixPath(info.filename)
++                    if (raw.is_absolute() or ".." in raw.parts or not raw.parts
++                            or "\\" in info.filename or any(":" in part for part in raw.parts)):
++
++                        raise ValueError("Архив содержит небезопасный путь. Установка отменена.")
++                    if raw.parts[0] != "program" or len(raw.parts) == 1:
++                        continue
++                    relative = Path(*raw.parts[1:])
++                    if relative.parts[0] in USER_DATA_DIRS:
++                        continue
++                    target = program_dir / relative
++                    if info.is_dir():
++                        target.mkdir(parents=True, exist_ok=True)
++                    else:
++                        target.parent.mkdir(parents=True, exist_ok=True)
++                        with archive.open(info) as src, target.open("wb") as dst:
++                            shutil.copyfileobj(src, dst)
++            if not any(p.is_file() for p in program_dir.rglob("*")):
++                raise ValueError("В архиве нет файлов program/. Проверьте формат пакета обновления.")
++            archive_path.unlink(missing_ok=True)
++            self.progress.emit(100)
++            result["staging_program"] = str(program_dir)
++            self.succeeded.emit(result)
++        except Exception as exc:
++            self.failed.emit(str(exc))
++
++
++class UpdateDialog(QDialog):
++    def __init__(self, parent, app_root: Path, settings: dict):
++        super().__init__(parent)
++        self.setWindowTitle("Обновление PSразмер PRO")
++        self.setMinimumWidth(560)
++        self.app_root = Path(app_root)
++        self.settings = settings
++        self.worker = None
++        self.latest_result = None
++        self.staging_root = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "PSrazmer PRO" / "UpdateStaging"
++
++        layout = QVBoxLayout(self)
++        layout.addWidget(QLabel(f"Установленная версия: <b>{APP_VERSION}</b>"))
++        layout.addWidget(QLabel("Адрес HTTPS manifest.json (его размещает разработчик):"))
++        self.url_edit = QLineEdit(str(settings.get("update_manifest_url", "")))
++        self.url_edit.setPlaceholderText("https://ваш-сайт/psrazmer-pro/manifest.json")
++        layout.addWidget(self.url_edit)
++        self.status = QLabel("Проверяйте обновления вручную. Данные сотрудников и настройки не отправляются.")
++        self.status.setWordWrap(True)
++        layout.addWidget(self.status)
++        self.notes = QPlainTextEdit()
++        self.notes.setReadOnly(True)
++        self.notes.setMaximumHeight(130)
++        self.notes.setPlaceholderText("Здесь появится список изменений новой версии.")
++        layout.addWidget(self.notes)
++        self.progress = QProgressBar()
++        self.progress.setValue(0)
++        layout.addWidget(self.progress)
++        buttons = QHBoxLayout()
++        self.check_btn = QPushButton("Проверить обновления")
++        self.check_btn.clicked.connect(self.check_updates)
++        self.install_btn = QPushButton("Скачать и установить")
++        self.install_btn.setEnabled(False)
++        self.install_btn.clicked.connect(self.download_update)
++        self.close_btn = QPushButton("Закрыть")
++        self.close_btn.clicked.connect(self.accept)
++        buttons.addWidget(self.check_btn)
++        buttons.addWidget(self.install_btn)
++        buttons.addWidget(self.close_btn)
++        layout.addLayout(buttons)
++        if not getattr(sys, "frozen", False) or os.name != "nt":
++            self.install_btn.setToolTip("Автоматическая установка доступна в установленной Windows-версии программы.")
++
++    def check_updates(self):
++        self.settings["update_manifest_url"] = self.url_edit.text().strip()
++        self._start_worker("check")
++
++    def download_update(self):
++        if not self.latest_result:
++            return
++        if not getattr(sys, "frozen", False) or os.name != "nt":
++            QMessageBox.information(self, "Обновление", "Автоустановка работает в установленной Windows-версии. Для исходного кода используйте новый установочный пакет.")
++            return
++        self._start_worker("download")
++
++    def _start_worker(self, action):
++        if self.worker and self.worker.isRunning():
++            return
++        self.settings["update_manifest_url"] = self.url_edit.text().strip()
++        self.check_btn.setEnabled(False)
++        self.install_btn.setEnabled(False)
++        self.status.setText("Проверка обновлений…" if action == "check" else "Загрузка и проверка пакета…")
++        self.progress.setValue(0)
++        self.worker = UpdateWorker(self.url_edit.text(), action, self.staging_root)
++        self.worker.succeeded.connect(lambda result, a=action: self._worker_succeeded(result, a))
++        self.worker.failed.connect(self._worker_failed)
++        self.worker.progress.connect(self.progress.setValue)
++        self.worker.finished.connect(lambda: self.check_btn.setEnabled(True))
++        self.worker.start()
++
++    def _worker_succeeded(self, result, action):
++        self.latest_result = result
++        manifest = result["manifest"]
++        notes = manifest.get("notes", [])
++        if isinstance(notes, str):
++            notes = [notes]
++        self.notes.setPlainText("\n".join(f"• {line}" for line in notes) or "Список изменений не опубликован.")
++        if action == "check":
++            try:
++                available = version_tuple(result["version"]) > version_tuple(APP_VERSION)
++            except ValueError as exc:
++                self._worker_failed(str(exc))
++                return
++            if available:
++                self.status.setText(f"Доступна новая версия: {result['version']}.")
++                self.install_btn.setEnabled(True)
++            else:
++                self.status.setText(f"Установлена актуальная версия ({APP_VERSION}).")
++        else:
++            self._prepare_installer(result)
++
++    def _prepare_installer(self, result):
++        app_exe = Path(sys.executable).resolve()
++        install_dir = app_exe.parent
++        ps1 = self.staging_root / "install_update.ps1"
++        backup_root = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "PSrazmer PRO" / "UpdateBackups" / (result["version"] + "-" + str(os.getpid()))
++        stage = Path(result["staging_program"])
++        # PowerShell waits for this process to exit, backs up replaced files, overlays the new runtime,
++        # and restores the backup if copying fails. User data directories are not touched.
++        script = r'''$ErrorActionPreference = 'Stop'
++$install = __INSTALL__
++$stage = __STAGE__
++$backup = __BACKUP__
++$exe = __EXE__
++New-Item -ItemType Directory -Force -Path $backup | Out-Null
++$files = Get-ChildItem -LiteralPath $stage -File -Recurse
++try {
++  foreach ($f in $files) {
++    $rel = $f.FullName.Substring($stage.Length).TrimStart('\\')
++    $dest = Join-Path $install $rel
++    if (Test-Path -LiteralPath $dest) {
++      $b = Join-Path $backup $rel
++      New-Item -ItemType Directory -Force -Path (Split-Path $b) | Out-Null
++      Copy-Item -LiteralPath $dest -Destination $b -Force
++    }
++  }
++  foreach ($f in $files) {
++    $rel = $f.FullName.Substring($stage.Length).TrimStart('\\')
++    $dest = Join-Path $install $rel
++    New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
++    Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
++  }
++  Start-Process -FilePath $exe -WorkingDirectory $install
++} catch {
++  Get-ChildItem -LiteralPath $backup -File -Recurse | ForEach-Object {
++    $rel = $_.FullName.Substring($backup.Length).TrimStart('\\')
++    $dest = Join-Path $install $rel
++    New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
++    Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
++  }
++  foreach ($f in $files) {
++    $rel = $f.FullName.Substring($stage.Length).TrimStart('\\')
++    $dest = Join-Path $install $rel
++    $b = Join-Path $backup $rel
++    if (!(Test-Path -LiteralPath $b) -and (Test-Path -LiteralPath $dest)) { Remove-Item -LiteralPath $dest -Force }
++  }
++  Start-Process -FilePath $exe -WorkingDirectory $install
++  throw
++}
++'''
++        replacements = {
++            "__INSTALL__": str(install_dir), "__STAGE__": str(stage),
++            "__BACKUP__": str(backup_root), "__EXE__": str(app_exe),
++        }
++        for key, value in replacements.items():
++            script = script.replace(key, "'" + value.replace("'", "''") + "'")
++        ps1.write_text(script, encoding="utf-8-sig")
++        bat = self.staging_root / "start_update.bat"
++        bat.write_text(
++            '@echo off\r\ntimeout /t 3 /nobreak >nul\r\n'
++            f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1}"\r\n',
++            encoding="utf-8",
++        )
++        answer = QMessageBox.question(
++            self, "Установить обновление",
++            f"Пакет версии {result['version']} проверен. Программа закроется, обновится и запустится снова.\n\n"
++            "Перед заменой файлов будет создана резервная копия. Данные сотрудников и настройки не затрагиваются. Продолжить?",
++            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
++        )
++        if answer == QMessageBox.Yes:
++            subprocess.Popen(["cmd.exe", "/c", "start", "", str(bat)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
++            self.parent().close()
++            self.accept()
++        else:
++            self.status.setText("Обновление загружено и проверено, установка отложена.")
++
++    def _worker_failed(self, message):
++        self.status.setText("Не удалось выполнить обновление.")
++        QMessageBox.warning(self, "Обновление PSразмер PRO", message)
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/version_utils.py /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/version_utils.py
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/app/version_utils.py	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/app/version_utils.py	2026-11-17 19:53:06.477315416 +0000
+@@ -0,0 +1,11 @@
++"""Version parsing helpers without GUI dependencies."""
++
++
++def version_tuple(value: str) -> tuple[int, ...]:
++    parts = value.strip().lstrip("vV").split(".")
++    if not parts or any(not p.isdigit() for p in parts):
++        raise ValueError(f"Некорректный номер версии: {value}")
++    numbers = [int(p) for p in parts]
++    while len(numbers) > 1 and numbers[-1] == 0:
++        numbers.pop()
++    return tuple(numbers)
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/build_installer.bat /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/build_installer.bat
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/build_installer.bat	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/build_installer.bat	2026-11-17 19:49:28.886324515 +0000
+@@ -0,0 +1,26 @@
++@echo off
++setlocal
++cd /d "%~dp0"
++if not exist "dist\PSrazmer_PRO\PSrazmer_PRO.exe" (
++  echo Сначала запустите build_windows.bat
++  pause
++  exit /b 1
++)
++set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
++if not exist "%ISCC%" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
++if not exist "%ISCC%" (
++  echo Не найден Inno Setup 6.
++  echo Установите Inno Setup 6, затем повторите запуск.
++  echo https://jrsoftware.org/isinfo.php
++  pause
++  exit /b 1
++)
++"%ISCC%" "PSrazmer_PRO.iss"
++if errorlevel 1 (
++  echo Ошибка создания установщика.
++  pause
++  exit /b 1
++)
++echo.
++echo Установщик создан в папке installer_output.
++pause
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/build_windows.bat /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/build_windows.bat
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/build_windows.bat	2026-11-17 19:54:33.144618368 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/build_windows.bat	2026-11-17 19:53:48.135837062 +0000
+@@ -1,21 +1,52 @@
+ @echo off
++setlocal EnableExtensions
+ cd /d "%~dp0"
+-if not exist ".venv\Scripts\python.exe" (
+-  py -3 -m venv .venv
+-  call .venv\Scripts\activate
+-  python -m pip install --upgrade pip
+-  pip install -r requirements.txt
+-) else (
+-  call .venv\Scripts\activate
+-)
+-pyinstaller --noconfirm --clean --windowed --name "PSrazmer_PRO" --icon "Resources\PSrazmer.ico" --add-data "Resources;Resources" --add-data "Templates;Templates" --collect-all PySide6 --collect-all cv2 app\main.py
++
++echo ================================================
++echo   PSразмер PRO 2.8.1 - сборка Windows-программы
++echo ================================================
++
++where py >nul 2>nul
+ if errorlevel 1 (
+-  echo Ошибка сборки. Проверьте сообщения выше.
++  echo Не найден Python Launcher (py). Установите Python 3.11/3.12 x64 с python.org.
+   pause
+   exit /b 1
+ )
+-copy /Y create_shortcuts.ps1 dist\PSrazmer_PRO\create_shortcuts.ps1 >nul
++
++if not exist ".venv\Scripts\python.exe" (
++  py -3 -m venv .venv
++  if errorlevel 1 goto :error
++)
++call ".venv\Scripts\activate.bat"
++python -m pip install --upgrade pip
++if errorlevel 1 goto :error
++python -m pip install -r requirements.txt
++if errorlevel 1 goto :error
++
++python -m PyInstaller --noconfirm --clean --windowed --onedir ^
++  --name "PSrazmer_PRO" ^
++  --contents-directory "." ^
++  --icon "Resources\PSrazmer.ico" ^
++  --add-data "Resources;Resources" ^
++  --add-data "Templates;Templates" ^
++  --collect-all PySide6 ^
++  --collect-all cv2 ^
++  app\main.py
++if errorlevel 1 goto :error
++
++if not exist "dist\PSrazmer_PRO\Resources" mkdir "dist\PSrazmer_PRO\Resources"
++copy /Y "create_shortcuts.ps1" "dist\PSrazmer_PRO\create_shortcuts.ps1" >nul
++if errorlevel 1 goto :error
++
++echo.
++echo Сборка завершена: dist\PSrazmer_PRO\PSrazmer_PRO.exe
++echo Теперь запустите build_installer.bat для создания Setup.exe.
++echo.
++pause
++exit /b 0
++
++:error
+ echo.
+-echo Готовая программа: dist\PSrazmer_PRO\PSrazmer_PRO.exe
+-echo Для ярлыков запустите create_shortcuts.ps1 из папки dist\PSrazmer_PRO.
++echo ОШИБКА сборки. Смотрите сообщения выше.
+ pause
++exit /b 1
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/make_update_package.py /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/make_update_package.py
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/make_update_package.py	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/make_update_package.py	2026-11-17 19:52:57.184551678 +0000
+@@ -0,0 +1,52 @@
++#!/usr/bin/env python3
++"""Create a SHA-256 protected update ZIP and manifest from a PyInstaller onedir build.
++Usage: python make_update_package.py 2.8.1 --notes "Исправления;Улучшения"
++"""
++import argparse
++import hashlib
++import json
++import zipfile
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parent
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("version", help="Новая версия, например 2.8.1")
++    parser.add_argument("--notes", default="", help="Пункты списка изменений через ;")
++    parser.add_argument("--build-dir", default=str(ROOT / "dist" / "PSrazmer_PRO"))
++    args = parser.parse_args()
++    build = Path(args.build_dir).resolve()
++    if not build.is_dir():
++        raise SystemExit(f"Не найдена сборка: {build}. Сначала запустите build_windows.bat")
++    out_dir = ROOT / "update_release"
++    out_dir.mkdir(exist_ok=True)
++    package_name = f"PSrazmer_PRO_{args.version}_update.zip"
++    package_path = out_dir / package_name
++    excluded = {"Config", "Logs", "Cache", "History", "Presets", "Exports", "Temp", "Backups", "Employees", "Templates", "__pycache__"}
++    with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=7) as archive:
++        for file in sorted(build.rglob("*")):
++            if not file.is_file():
++                continue
++            relative = file.relative_to(build)
++            if any(part in excluded for part in relative.parts):
++                continue
++            archive.write(file, Path("program") / relative)
++    digest = hashlib.sha256(package_path.read_bytes()).hexdigest()
++    manifest = {
++        "version": args.version,
++        "package": package_name,
++        "sha256": digest,
++        "notes": [item.strip() for item in args.notes.split(";") if item.strip()],
++    }
++    manifest_path = out_dir / "manifest.json"
++    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
++    print(f"Создано: {package_path}")
++    print(f"Создано: {manifest_path}")
++    print(f"SHA-256: {digest}")
++    print("Загрузите ZIP и manifest.json в один каталог HTTPS-хостинга.")
++
++
++if __name__ == "__main__":
++    main()
+Binary files /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/tests/__pycache__/test_core_invariants.cpython-313.pyc and /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/tests/__pycache__/test_core_invariants.cpython-313.pyc differ
+diff -ruN /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/tests/test_core_invariants.py /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/tests/test_core_invariants.py
+--- /tmp/psrazmer_2_8_base/PSrazmer_PRO_2_6_work/tests/test_core_invariants.py	2026-11-17 19:54:33.161691521 +0000
++++ /mnt/data/psrazmer_inst/PSrazmer_PRO_2_6_work/tests/test_core_invariants.py	2026-11-17 19:53:07.013400919 +0000
+@@ -35,3 +35,13 @@
+ 
+ if __name__ == "__main__":
+     unittest.main()
++
++
++class UpdateVersionTests(unittest.TestCase):
++    def test_version_comparison_normalizes_trailing_zeroes(self):
++        import sys
++        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
++        from version_utils import version_tuple
++        self.assertEqual(version_tuple("2.8"), version_tuple("2.8.0"))
++        self.assertGreater(version_tuple("2.8.1"), version_tuple("2.8.0"))
++        self.assertGreater(version_tuple("3.0.0"), version_tuple("2.99.9"))
