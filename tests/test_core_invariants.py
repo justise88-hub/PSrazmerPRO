@@ -45,3 +45,22 @@ class UpdateVersionTests(unittest.TestCase):
         self.assertEqual(version_tuple("2.8"), version_tuple("2.8.0"))
         self.assertGreater(version_tuple("2.8.1"), version_tuple("2.8.0"))
         self.assertGreater(version_tuple("3.0.0"), version_tuple("2.99.9"))
+
+
+class ResponsiveLayoutTests(unittest.TestCase):
+    def test_startup_size_adapts_to_common_monitor_sizes(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
+        from version_utils import startup_window_metrics
+        small = startup_window_metrics(800, 600)
+        full_hd = startup_window_metrics(1920, 1080)
+        self.assertLessEqual(small[2], 800)
+        self.assertLessEqual(small[3], 600)
+        self.assertEqual(full_hd[2:], (1440, 940))
+
+    def test_startup_size_rejects_invalid_monitor(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
+        from version_utils import startup_window_metrics
+        with self.assertRaises(ValueError):
+            startup_window_metrics(0, 1080)

@@ -2,8 +2,8 @@
 
 Update manifest format (hosted over HTTPS):
 {
-  "version": "2.8.2",
-  "package": "PSrazmer_PRO_2.8.2_update.zip",
+  "version": "2.9.0",
+  "package": "PSrazmer_PRO_2.9.0_update.zip",
   "sha256": "<64 hex chars>",
   "notes": ["Исправления и улучшения"]
 }
@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QMessageBox, QPlainTextEdit
 )
 
-APP_VERSION = "2.8.2"
+APP_VERSION = "2.9.0"
 DEFAULT_UPDATE_SOURCE_URL = "https://disk.yandex.ru/d/3-8I5L5VUQpoEA"
 USER_DATA_DIRS = {
     "Config", "Logs", "Cache", "History", "Presets", "Exports",

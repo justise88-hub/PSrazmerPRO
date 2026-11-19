@@ -1,5 +1,5 @@
-﻿#define MyAppName "PSразмер PRO"
-#define MyAppVersion "2.8.2"
+#define MyAppName "PSразмер PRO"
+#define MyAppVersion "2.9.0"
 #define MyAppPublisher "P.Sveshnikov"
 #define MyAppExeName "PSrazmer_PRO.exe"
 
@@ -13,7 +13,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=installer_output
-OutputBaseFilename=PSrazmer_PRO_2_8_2_Setup
+OutputBaseFilename=PSrazmer_PRO_2_9_0_Setup
 SetupIconFile=Resources\PSrazmer.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesInstallIn64BitMode=x64
