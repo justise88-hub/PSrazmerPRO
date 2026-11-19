@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Create a SHA-256 protected update ZIP and manifest from a PyInstaller onedir build.
-Usage: python make_update_package.py 2.9.0 --notes "Исправления;Улучшения"
+Usage: python make_update_package.py 2.9.1 --notes "Исправления;Улучшения"
 """
 import argparse
 import hashlib
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("version", help="Новая версия, например 2.9.0")
+    parser.add_argument("version", help="Новая версия, например 2.9.1")
     parser.add_argument("--notes", default="", help="Пункты списка изменений через ;")
     parser.add_argument("--build-dir", default=str(ROOT / "dist" / "PSrazmer_PRO"))
     args = parser.parse_args()

@@ -13,7 +13,7 @@ OAuth-токен Яндекса и установленное приложени
 ```text
 PSrazmer_PRO_Updates/
   manifest.json
-  PSrazmer_PRO_2.9.0_update.zip
+  PSrazmer_PRO_2.9.1_update.zip
 ```
 
 Важно: `manifest.json` и ZIP должны находиться в одной папке. Имя ZIP в манифесте должно точно совпадать с именем загруженного файла.
@@ -28,7 +28,7 @@ PSrazmer_PRO_Updates/
 4. Создайте пакет обновления:
 
 ```bat
-python make_update_package.py 2.9.0 --notes "Исправлены ошибки;Улучшена работа с карточками"
+python make_update_package.py 2.9.1 --notes "Исправлены ошибки;Улучшена работа с карточками"
 ```
 
 В каталоге `update_release` появятся ZIP и `manifest.json`. Скрипт сам рассчитывает SHA-256 архива.
@@ -72,8 +72,8 @@ python make_update_package.py 2.9.0 --notes "Исправлены ошибки;�
 
 ```json
 {
-  "version": "2.9.0",
-  "package": "PSrazmer_PRO_2.9.0_update.zip",
+  "version": "2.9.1",
+  "package": "PSrazmer_PRO_2.9.1_update.zip",
   "sha256": "64 шестнадцатеричных символа SHA-256",
   "notes": [
     "Исправлены ошибки",

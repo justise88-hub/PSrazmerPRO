@@ -1,4 +1,4 @@
-PSразмер PRO 2.9.0 — Magicard HUB
+PSразмер PRO 2.9.1 — Magicard HUB
 Принтер: Magicard 300
 ПО: Magicard HUB 2.0.6
 Формат карты: CR80, 85,60 × 53,98 мм

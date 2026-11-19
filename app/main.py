@@ -18,7 +18,7 @@ from version_utils import startup_window_metrics
 from hub_integration import (inspect_template, load_card, find_photo_element, atomic_write_card, safe_component,
                               discover_hub_executable, open_card_file, compare_template_preservation, extract_card_preview)
 
-APP_NAME = "PSразмер PRO 2.9.0 — Magicard HUB Workflow"
+APP_NAME = "PSразмер PRO 2.9.1 — Magicard HUB Workflow"
 DEVELOPER_NAME = "P.Sveshnikov"
 
 # Estimated portrait frame measured proportionally from the user's HUB screenshot.
@@ -1761,7 +1761,7 @@ def create_splash_pixmap():
     painter.setPen(QColor("#AEB6BE"))
     small_font = QFont("Arial", 8)
     painter.setFont(small_font)
-    painter.drawText(44, 283, "Карточки и портреты для Magicard HUB  •  P.Sveshnikov  •  2.9.0")
+    painter.drawText(44, 283, "Карточки и портреты для Magicard HUB  •  P.Sveshnikov  •  2.9.1")
     painter.end()
     return pixmap
 
